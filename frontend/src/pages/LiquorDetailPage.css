@@ -1,0 +1,228 @@
+.detail-page {
+  max-width: 900px;
+}
+
+.detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 14px;
+  margin-bottom: 24px;
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.detail-back:hover {
+  color: var(--text-primary);
+}
+
+/* Hero */
+.detail-hero {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+  margin-bottom: 32px;
+  background: var(--bg-card);
+}
+
+.detail-hero img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.detail-hero-placeholder {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(135deg, var(--bg-card), var(--bg-elevated));
+  color: var(--text-muted);
+}
+
+.detail-hero-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 32px;
+  background: linear-gradient(transparent, rgba(26, 26, 28, 0.95));
+}
+
+.detail-hero-name {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.2;
+  margin-bottom: 4px;
+}
+
+.detail-hero-type {
+  font-size: 16px;
+  color: var(--text-secondary);
+}
+
+/* Meta row */
+.detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 32px;
+}
+
+/* Score */
+.detail-score {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 20px 24px;
+  margin-bottom: 24px;
+}
+
+.detail-score-number {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 48px;
+  font-weight: 700;
+  color: var(--gold);
+  line-height: 1;
+}
+
+.detail-score-label {
+  font-size: 13px;
+  color: var(--text-tertiary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.detail-score-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.detail-score-bar-fill {
+  height: 100%;
+  background: var(--gold);
+  border-radius: 3px;
+}
+
+/* Cards */
+.detail-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  margin-bottom: 20px;
+}
+
+.detail-card-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 20px;
+  font-weight: 600;
+  margin-bottom: 16px;
+  color: var(--text-primary);
+}
+
+.detail-card-text {
+  font-size: 14px;
+  color: var(--text-secondary);
+  line-height: 1.7;
+}
+
+/* Profile */
+.detail-profile-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-profile-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.detail-profile-label {
+  font-size: 13px;
+  color: var(--text-secondary);
+  min-width: 140px;
+}
+
+.detail-profile-track {
+  flex: 1;
+  height: 8px;
+  background: var(--bg-input);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.detail-profile-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold));
+  border-radius: 4px;
+  transition: width 0.4s ease;
+}
+
+.detail-profile-value {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 32px;
+  text-align: right;
+}
+
+/* Tasting notes */
+.detail-notes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.detail-note {
+  padding: 6px 14px;
+  background: var(--gold-subtle);
+  color: var(--gold);
+  border-radius: 20px;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+/* Actions */
+.detail-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-subtle);
+}
+
+/* Loading */
+.detail-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 80px;
+  color: var(--text-tertiary);
+}
+
+/* Delete confirm */
+.delete-confirm {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.delete-confirm-text {
+  font-size: 13px;
+  color: var(--destructive);
+}

@@ -1,0 +1,35 @@
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 16px;
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--text-secondary);
+  transition: all 0.2s ease;
+  width: 100%;
+  text-align: left;
+}
+
+.nav-item:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}
+
+.nav-item-active {
+  color: var(--gold);
+  background: var(--gold-subtle);
+  font-weight: 500;
+}
+
+.nav-item-active:hover {
+  background: var(--gold-subtle);
+  color: var(--gold);
+}
+
+.nav-item-icon {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+}

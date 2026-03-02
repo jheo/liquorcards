@@ -1,0 +1,32 @@
+# Environment
+.env
+*.env.local
+
+# IDE
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Backend (Gradle / Spring Boot)
+server/build/
+server/.gradle/
+server/data/
+server/uploads/
+server/out/
+
+# Frontend (Node / Vite)
+frontend/node_modules/
+frontend/dist/
+frontend/coverage/
+frontend/e2e/screenshots/
+frontend/test-results/
+frontend/playwright-report/
+
+# Claude
+.claude/

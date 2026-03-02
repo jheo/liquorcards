@@ -1,0 +1,38 @@
+.search-bar {
+  position: relative;
+  width: 100%;
+}
+
+.search-bar .search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--text-tertiary);
+  pointer-events: none;
+}
+
+.search-bar .input {
+  padding-left: 42px;
+  padding-right: 40px;
+}
+
+.search-bar .clear-btn {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: var(--text-tertiary);
+  transition: all 0.2s ease;
+}
+
+.search-bar .clear-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-elevated);
+}

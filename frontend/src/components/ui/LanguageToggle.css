@@ -1,0 +1,31 @@
+.language-toggle {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  background: var(--bg-surface);
+  border-radius: 8px;
+  margin-bottom: 12px;
+}
+
+.language-toggle-btn {
+  flex: 1;
+  padding: 6px 12px;
+  border: none;
+  background: transparent;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  font-weight: 500;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.language-toggle-btn:hover {
+  color: var(--text-secondary);
+}
+
+.language-toggle-btn.active {
+  background: var(--bg-card);
+  color: var(--gold);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}

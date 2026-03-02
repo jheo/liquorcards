@@ -1,0 +1,25 @@
+@media print {
+  body {
+    background: white;
+    color: #1A1A1C;
+  }
+
+  .sidebar,
+  .no-print {
+    display: none !important;
+  }
+
+  .print-area {
+    display: block !important;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    box-shadow: none;
+  }
+
+  * {
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+    color-adjust: exact;
+  }
+}
