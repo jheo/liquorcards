@@ -1,6 +1,6 @@
 package com.liquir.dto
 
-import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonAlias
 import com.liquir.model.Liquor
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
@@ -105,11 +105,11 @@ data class AiLookupResponse(
     val profile: Map<String, Int>?,
     val tastingNotes: List<String>?,
     val suggestedImageKeyword: String?,
-    @JsonProperty("name_ko") val nameKo: String? = null,
-    @JsonProperty("type_ko") val typeKo: String? = null,
-    @JsonProperty("about_ko") val aboutKo: String? = null,
-    @JsonProperty("heritage_ko") val heritageKo: String? = null,
-    @JsonProperty("tastingNotes_ko") val tastingNotesKo: List<String>? = null
+    @JsonAlias("name_ko") val nameKo: String? = null,
+    @JsonAlias("type_ko") val typeKo: String? = null,
+    @JsonAlias("about_ko") val aboutKo: String? = null,
+    @JsonAlias("heritage_ko") val heritageKo: String? = null,
+    @JsonAlias("tastingNotes_ko") val tastingNotesKo: List<String>? = null
 )
 
 private val mapper = jacksonObjectMapper()

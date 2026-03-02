@@ -13,7 +13,7 @@ import './AddLiquorPage.css';
 export function AddLiquorPage() {
   const navigate = useNavigate();
   const { result, loading, error, search, reset } = useAiSearch();
-  const { t } = useLanguage();
+  const { locale, t } = useLanguage();
   const [query, setQuery] = useState('');
   const [provider, setProvider] = useState('claude');
   const [imageFile, setImageFile] = useState<File | null>(null);
@@ -82,6 +82,12 @@ export function AddLiquorPage() {
 
   const profile: LiquorProfile | undefined = result?.profile;
 
+  const displayName = result ? (locale === 'ko' && result.nameKo ? result.nameKo : result.name) : '';
+  const displayType = result ? (locale === 'ko' && result.typeKo ? result.typeKo : result.type) : undefined;
+  const displayAbout = result ? (locale === 'ko' && result.aboutKo ? result.aboutKo : result.about) : undefined;
+  const displayHeritage = result ? (locale === 'ko' && result.heritageKo ? result.heritageKo : result.heritage) : undefined;
+  const displayTastingNotes = result ? (locale === 'ko' && result.tastingNotesKo ? result.tastingNotesKo : result.tastingNotes) : undefined;
+
   return (
     <div className="add-page">
       <h1 className="add-title">{t('addLiquor.title')}</h1>
@@ -122,10 +128,10 @@ export function AddLiquorPage() {
 
       {result && !loading && (
         <div className="ai-preview">
-          <h2 className="ai-preview-title">{result.name}</h2>
+          <h2 className="ai-preview-title">{displayName}</h2>
 
           <div className="preview-grid">
-            <PreviewField label={t('addLiquor.type')} value={result.type} />
+            <PreviewField label={t('addLiquor.type')} value={displayType} />
             <PreviewField label={t('addLiquor.category')} value={result.category} />
             <PreviewField label={t('addLiquor.abv')} value={result.abv ? `${result.abv}%` : undefined} />
             <PreviewField label={t('addLiquor.age')} value={result.age} />
@@ -136,17 +142,17 @@ export function AddLiquorPage() {
             <PreviewField label={t('addLiquor.volume')} value={result.volume} />
           </div>
 
-          {result.about && (
+          {displayAbout && (
             <div className="preview-section">
               <div className="preview-section-title">{t('addLiquor.about')}</div>
-              <div className="preview-section-text">{result.about}</div>
+              <div className="preview-section-text">{displayAbout}</div>
             </div>
           )}
 
-          {result.heritage && (
+          {displayHeritage && (
             <div className="preview-section">
               <div className="preview-section-title">{t('addLiquor.heritage')}</div>
-              <div className="preview-section-text">{result.heritage}</div>
+              <div className="preview-section-text">{displayHeritage}</div>
             </div>
           )}
 
@@ -167,11 +173,11 @@ export function AddLiquorPage() {
             </div>
           )}
 
-          {result.tastingNotes && result.tastingNotes.length > 0 && (
+          {displayTastingNotes && displayTastingNotes.length > 0 && (
             <div className="preview-section">
               <div className="preview-section-title">{t('addLiquor.tastingNotes')}</div>
               <div className="tasting-notes">
-                {result.tastingNotes.map((note) => (
+                {displayTastingNotes.map((note) => (
                   <span key={note} className="tasting-note">{note}</span>
                 ))}
               </div>

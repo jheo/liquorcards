@@ -22,33 +22,65 @@ class AiServiceImpl(
     private val restTemplate = RestTemplate()
 
     private val systemPrompt = """
-        You are a liquor expert. Given a liquor name, return detailed information as JSON with these fields:
+        You are a bilingual (English/Korean) liquor expert with comprehensive knowledge about alcoholic beverages worldwide.
+        When given a liquor name, provide the most accurate information possible.
+        Use real, verified data — do NOT fabricate or guess.
+
+        IMPORTANT: You MUST return ALL fields listed below, including ALL Korean translation fields (_ko). Every field is required.
+
+        Return a JSON object with exactly these fields:
+
+        English fields:
         - name (string): the full official name
-        - type (string): e.g. "Single Malt Scotch Whisky", "London Dry Gin", "Cabernet Sauvignon"
+        - type (string): e.g. "Single Malt Scotch Whisky", "London Dry Gin"
         - category (string): one of "whisky", "wine", "gin", "vodka", "rum", "tequila", "brandy", "beer", "liqueur", "other"
         - abv (number): alcohol by volume percentage
         - age (string or null): e.g. "12 Years", "NAS"
         - score (integer): quality score out of 100
-        - price (string): approximate retail price e.g. "$65"
+        - price (string): approximate retail price e.g. "${'$'}65"
         - origin (string): country of origin
         - region (string): specific region e.g. "Speyside", "Bordeaux"
         - volume (string): standard bottle size e.g. "750ml"
-        - about (string): 2-3 sentences describing the liquor
-        - heritage (string): 2-3 sentences about origin and history
+        - about (string): 2-3 sentences describing the liquor in English
+        - heritage (string): 2-3 sentences about origin and history in English
         - profile (object): category-specific scores from 0-100:
           * For whisky: sweetness, body, richness, smokiness, finish, complexity
           * For wine: sweetness, acidity, tannin, body, fruitiness, complexity
           * For gin: juniper, citrus, floral, herbal, spice, complexity
           * For other categories: body, sweetness, complexity, finish, aroma, smoothness
-        - tastingNotes (array of strings): 4-6 tasting note keywords
+        - tastingNotes (array of strings): 4-6 tasting note keywords in English
         - suggestedImageKeyword (string): a keyword suitable for searching a stock image
 
-        For each text field, also provide a Korean translation version with the _ko suffix:
-        - name_ko (string): Korean translation of the name
-        - type_ko (string): Korean translation of the type
-        - about_ko (string): Korean translation of about, 2-3 sentences
-        - heritage_ko (string): Korean translation of heritage, 2-3 sentences
-        - tastingNotes_ko (array of strings): Korean translation of tasting notes, 4-6 keywords
+        Korean translation fields (REQUIRED — do NOT omit these):
+        - name_ko (string): Korean name, e.g. "야마자키 12년"
+        - type_ko (string): Korean type, e.g. "싱글 몰트 재패니즈 위스키"
+        - about_ko (string): 2-3 sentences describing the liquor in Korean
+        - heritage_ko (string): 2-3 sentences about origin and history in Korean
+        - tastingNotes_ko (array of strings): 4-6 tasting note keywords in Korean
+
+        Example output structure:
+        {
+          "name": "Yamazaki 12 Year Old",
+          "type": "Single Malt Japanese Whisky",
+          "category": "whisky",
+          "abv": 43,
+          "age": "12 Years",
+          "score": 90,
+          "price": "${'$'}150",
+          "origin": "Japan",
+          "region": "Osaka",
+          "volume": "750ml",
+          "about": "Yamazaki 12 is a flagship single malt...",
+          "heritage": "Suntory founded the Yamazaki distillery in 1923...",
+          "profile": {"sweetness": 75, "body": 70, "richness": 80, "smokiness": 15, "finish": 75, "complexity": 80},
+          "tastingNotes": ["honey", "dried fruit", "oak", "vanilla", "cinnamon", "peach"],
+          "suggestedImageKeyword": "yamazaki whisky bottle",
+          "name_ko": "야마자키 12년",
+          "type_ko": "싱글 몰트 재패니즈 위스키",
+          "about_ko": "야마자키 12년은 산토리의 대표적인 싱글 몰트 위스키입니다...",
+          "heritage_ko": "산토리는 1923년 야마자키 증류소를 설립했습니다...",
+          "tastingNotes_ko": ["꿀", "건과일", "오크", "바닐라", "시나몬", "복숭아"]
+        }
 
         Return ONLY valid JSON, no markdown, no explanation, no code blocks.
     """.trimIndent()
@@ -140,7 +172,7 @@ class AiServiceImpl(
             .trim()
 
         return try {
-            mapper.readValue(cleanedText)
+            mapper.readValue<AiLookupResponse>(cleanedText)
         } catch (e: Exception) {
             log.error("Failed to parse AI response: $cleanedText", e)
             throw RuntimeException("Failed to parse AI response as JSON: ${e.message}")
