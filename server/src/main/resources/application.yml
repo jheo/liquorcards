@@ -27,3 +27,6 @@ app:
     anthropic-api-key: ${ANTHROPIC_API_KEY:}
     openai-api-key: ${OPENAI_API_KEY:}
     google-api-key: ${GOOGLE_API_KEY:}
+    google-cse-id: ${GOOGLE_CSE_ID:}
+    untappd-client-id: ${UNTAPPD_CLIENT_ID:}
+    untappd-client-secret: ${UNTAPPD_CLIENT_SECRET:}

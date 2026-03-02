@@ -28,6 +28,7 @@ dependencies {
     implementation("me.paulschwarz:spring-dotenv:4.0.0")
     runtimeOnly("org.xerial:sqlite-jdbc:3.45.3.0")
     implementation("org.hibernate.orm:hibernate-community-dialects:6.4.4.Final")
+    implementation("org.jsoup:jsoup:1.17.2")
     testRuntimeOnly("com.h2database:h2")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }

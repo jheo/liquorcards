@@ -120,3 +120,12 @@
   font-size: 9px;
   font-weight: 500;
 }
+
+.print-card-pairing-tag {
+  padding: 2px 6px;
+  background: #E8F5E9;
+  color: #2E7D32;
+  border-radius: 8px;
+  font-size: 9px;
+  font-weight: 500;
+}

@@ -139,6 +139,10 @@
   line-height: 1.7;
 }
 
+.detail-card-text + .detail-notes {
+  margin-top: 16px;
+}
+
 /* Profile */
 .detail-profile-list {
   display: flex;

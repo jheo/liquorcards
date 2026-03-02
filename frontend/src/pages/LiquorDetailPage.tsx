@@ -48,6 +48,8 @@ export function LiquorDetailPage() {
   const displayAbout = locale === 'ko' && liquor.aboutKo ? liquor.aboutKo : liquor.about;
   const displayHeritage = locale === 'ko' && liquor.heritageKo ? liquor.heritageKo : liquor.heritage;
   const displayTastingNotes = locale === 'ko' && liquor.tastingNotesKo ? liquor.tastingNotesKo : (liquor.tastingNotes ?? []);
+  const displayTastingDetail = locale === 'ko' && liquor.tastingDetailKo ? liquor.tastingDetailKo : liquor.tastingDetail;
+  const displayPairing = locale === 'ko' && liquor.pairingKo ? liquor.pairingKo : (liquor.pairing ?? []);
 
   const profile: LiquorProfile = liquor.profile ?? {};
 
@@ -136,12 +138,28 @@ export function LiquorDetailPage() {
         </div>
       )}
 
-      {displayTastingNotes.length > 0 && (
+      {(displayTastingDetail || displayTastingNotes.length > 0) && (
         <div className="detail-card">
           <h3 className="detail-card-title">{t('detail.tastingNotes')}</h3>
+          {displayTastingDetail && (
+            <p className="detail-card-text">{displayTastingDetail}</p>
+          )}
+          {displayTastingNotes.length > 0 && (
+            <div className="detail-notes">
+              {displayTastingNotes.map((note) => (
+                <span key={note} className="detail-note">{note}</span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {displayPairing.length > 0 && (
+        <div className="detail-card">
+          <h3 className="detail-card-title">{t('detail.pairing')}</h3>
           <div className="detail-notes">
-            {displayTastingNotes.map((note) => (
-              <span key={note} className="detail-note">{note}</span>
+            {displayPairing.map((item) => (
+              <span key={item} className="detail-note">{item}</span>
             ))}
           </div>
         </div>

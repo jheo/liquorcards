@@ -11,6 +11,7 @@ export function PrintCard({ liquor }: PrintCardProps) {
   const { locale } = useLanguage();
   const profile: LiquorProfile = liquor.profile ?? {};
   const tastingNotes = locale === 'ko' && liquor.tastingNotesKo ? liquor.tastingNotesKo : (liquor.tastingNotes ?? []);
+  const pairing = locale === 'ko' && liquor.pairingKo ? liquor.pairingKo : (liquor.pairing ?? []);
 
   const displayName = locale === 'ko' && liquor.nameKo ? liquor.nameKo : liquor.name;
   const displayType = locale === 'ko' && liquor.typeKo ? liquor.typeKo : liquor.type;
@@ -58,6 +59,13 @@ export function PrintCard({ liquor }: PrintCardProps) {
           <div className="print-card-notes">
             {tastingNotes.slice(0, 6).map((note) => (
               <span key={note} className="print-card-note-tag">{note}</span>
+            ))}
+          </div>
+        )}
+        {pairing.length > 0 && (
+          <div className="print-card-notes">
+            {pairing.slice(0, 4).map((item) => (
+              <span key={item} className="print-card-pairing-tag">{item}</span>
             ))}
           </div>
         )}

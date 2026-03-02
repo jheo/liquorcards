@@ -56,9 +56,23 @@ class Liquor(
     @Column(length = 2000)
     var tastingNotesKoJson: String? = null,
 
+    @Column(length = 2000)
+    var tastingDetail: String? = null,
+
+    @Column(length = 2000)
+    var tastingDetailKo: String? = null,
+
+    @Column(length = 2000)
+    var pairingJson: String? = null,
+
+    @Column(length = 2000)
+    var pairingKoJson: String? = null,
+
     var imageUrl: String? = null,
 
     var suggestedImageKeyword: String? = null,
+
+    var dataSource: String? = null,
 
     @Column(nullable = false)
     var status: String = "active",

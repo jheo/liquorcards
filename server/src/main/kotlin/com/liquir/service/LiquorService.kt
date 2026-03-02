@@ -61,6 +61,10 @@ class LiquorService(
         request.heritage?.let { liquor.heritage = it }
         request.profile?.let { liquor.profileJson = mapper.writeValueAsString(it) }
         request.tastingNotes?.let { liquor.tastingNotesJson = mapper.writeValueAsString(it) }
+        request.tastingDetail?.let { liquor.tastingDetail = it }
+        request.tastingDetailKo?.let { liquor.tastingDetailKo = it }
+        request.pairing?.let { liquor.pairingJson = mapper.writeValueAsString(it) }
+        request.pairingKo?.let { liquor.pairingKoJson = mapper.writeValueAsString(it) }
         request.imageUrl?.let { liquor.imageUrl = it }
         request.suggestedImageKeyword?.let { liquor.suggestedImageKeyword = it }
         request.status?.let { liquor.status = it }
