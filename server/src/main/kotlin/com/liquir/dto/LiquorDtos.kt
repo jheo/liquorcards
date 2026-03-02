@@ -105,6 +105,7 @@ data class AiLookupResponse(
     val profile: Map<String, Int>?,
     val tastingNotes: List<String>?,
     val suggestedImageKeyword: String?,
+    val imageUrl: String? = null,
     @JsonAlias("name_ko") val nameKo: String? = null,
     @JsonAlias("type_ko") val typeKo: String? = null,
     @JsonAlias("about_ko") val aboutKo: String? = null,

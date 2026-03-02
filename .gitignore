@@ -20,6 +20,10 @@ server/data/
 server/uploads/
 server/out/
 
+# SQLite DB & uploads (root-level when run from project root)
+data/
+uploads/
+
 # Frontend (Node / Vite)
 frontend/node_modules/
 frontend/dist/

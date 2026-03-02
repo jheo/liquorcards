@@ -2,6 +2,7 @@ package com.liquir.controller
 
 import com.liquir.dto.*
 import com.liquir.service.AiService
+import com.liquir.service.ImageGenerationService
 import com.liquir.service.LiquorService
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -11,7 +12,8 @@ import org.springframework.web.bind.annotation.*
 @RequestMapping("/api/liquors")
 class LiquorController(
     private val liquorService: LiquorService,
-    private val aiService: AiService
+    private val aiService: AiService,
+    private val imageGenerationService: ImageGenerationService
 ) {
 
     @GetMapping
@@ -79,7 +81,12 @@ class LiquorController(
     @PostMapping("/ai-lookup")
     fun aiLookup(@RequestBody request: AiLookupRequest): ResponseEntity<Any> {
         return try {
-            val result = aiService.lookupLiquor(request.name, request.provider)
+            val aiResult = aiService.lookupLiquor(request.name, request.provider)
+            val keyword = aiResult.suggestedImageKeyword
+            val result = if (keyword != null) {
+                val imageUrl = imageGenerationService.generateImage(keyword)
+                if (imageUrl != null) aiResult.copy(imageUrl = imageUrl) else aiResult
+            } else aiResult
             ResponseEntity.ok(result)
         } catch (e: IllegalStateException) {
             ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)

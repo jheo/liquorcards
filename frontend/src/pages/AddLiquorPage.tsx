@@ -1,9 +1,23 @@
 import { useState, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Loader, Sparkles, Upload, Wine } from 'lucide-react';
+import {
+  Loader,
+  Sparkles,
+  Upload,
+  Wine,
+  Clock,
+  CheckCircle,
+  AlertCircle,
+  X,
+  RotateCcw,
+  Trash2,
+  ChevronDown,
+  ChevronUp,
+} from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Chip } from '../components/ui/Chip';
-import { useAiSearch } from '../hooks/useAiSearch';
+import { useSearchQueue } from '../hooks/useSearchQueue';
+import type { SearchItem } from '../hooks/useSearchQueue';
 import { createLiquor, uploadImage } from '../api/client';
 import { useLanguage } from '../i18n/LanguageContext';
 import type { LiquorProfile } from '../types/liquor';
@@ -12,18 +26,21 @@ import './AddLiquorPage.css';
 
 export function AddLiquorPage() {
   const navigate = useNavigate();
-  const { result, loading, error, search, reset } = useAiSearch();
+  const { items, addSearch, removeItem, clearAll, retryItem } = useSearchQueue();
   const { locale, t } = useLanguage();
   const [query, setQuery] = useState('');
   const [provider, setProvider] = useState('claude');
-  const [imageFile, setImageFile] = useState<File | null>(null);
-  const [imagePreviewUrl, setImagePreviewUrl] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [savingId, setSavingId] = useState<string | null>(null);
+  const [imageFiles, setImageFiles] = useState<Record<string, File>>({});
+  const [imagePreviews, setImagePreviews] = useState<Record<string, string>>({});
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activeUploadId = useRef<string | null>(null);
 
   const handleSearch = () => {
     if (!query.trim()) return;
-    search(query.trim(), provider);
+    addSearch(query.trim(), provider);
+    setQuery('');
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
@@ -32,19 +49,32 @@ export function AddLiquorPage() {
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (!file) return;
-    setImageFile(file);
-    setImagePreviewUrl(URL.createObjectURL(file));
+    const id = activeUploadId.current;
+    if (!file || !id) return;
+    setImageFiles((prev) => ({ ...prev, [id]: file }));
+    setImagePreviews((prev) => ({ ...prev, [id]: URL.createObjectURL(file) }));
   };
 
-  const handleSave = async () => {
-    if (!result) return;
-    setSaving(true);
+  const handleUploadClick = (id: string) => {
+    activeUploadId.current = id;
+    fileInputRef.current?.click();
+  };
+
+  const toggleExpand = (id: string) => {
+    setExpandedId((prev) => (prev === id ? null : id));
+  };
+
+  const handleSave = async (item: SearchItem) => {
+    if (!item.result) return;
+    setSavingId(item.id);
     try {
+      const result = item.result;
       let imageUrl: string | undefined;
-      if (imageFile) {
-        const res = await uploadImage(imageFile);
+      if (imageFiles[item.id]) {
+        const res = await uploadImage(imageFiles[item.id]);
         imageUrl = res.data.url;
+      } else if (result.imageUrl) {
+        imageUrl = result.imageUrl;
       }
 
       const data = {
@@ -72,21 +102,27 @@ export function AddLiquorPage() {
       };
 
       const res = await createLiquor(data);
+      removeItem(item.id);
       navigate(`/liquor/${res.data.id}`);
     } catch {
       alert('Failed to save liquor');
     } finally {
-      setSaving(false);
+      setSavingId(null);
     }
   };
 
-  const profile: LiquorProfile | undefined = result?.profile;
-
-  const displayName = result ? (locale === 'ko' && result.nameKo ? result.nameKo : result.name) : '';
-  const displayType = result ? (locale === 'ko' && result.typeKo ? result.typeKo : result.type) : undefined;
-  const displayAbout = result ? (locale === 'ko' && result.aboutKo ? result.aboutKo : result.about) : undefined;
-  const displayHeritage = result ? (locale === 'ko' && result.heritageKo ? result.heritageKo : result.heritage) : undefined;
-  const displayTastingNotes = result ? (locale === 'ko' && result.tastingNotesKo ? result.tastingNotesKo : result.tastingNotes) : undefined;
+  const statusIcon = (status: SearchItem['status']) => {
+    switch (status) {
+      case 'pending':
+        return <Clock size={16} className="queue-icon queue-icon-pending" />;
+      case 'searching':
+        return <Loader size={16} className="spin queue-icon queue-icon-searching" />;
+      case 'done':
+        return <CheckCircle size={16} className="queue-icon queue-icon-done" />;
+      case 'error':
+        return <AlertCircle size={16} className="queue-icon queue-icon-error" />;
+    }
+  };
 
   return (
     <div className="add-page">
@@ -105,8 +141,8 @@ export function AddLiquorPage() {
           />
           <Button
             onClick={handleSearch}
-            disabled={!query.trim() || loading}
-            icon={loading ? <Loader size={16} className="spin" /> : <Sparkles size={16} />}
+            disabled={!query.trim()}
+            icon={<Sparkles size={16} />}
           >
             {t('addLiquor.search')}
           </Button>
@@ -117,19 +153,160 @@ export function AddLiquorPage() {
         </div>
       </div>
 
-      {error && <div className="ai-error">{error}</div>}
+      {/* Hidden file input shared across queue items */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="image-upload-input"
+        onChange={handleImageChange}
+      />
 
-      {loading && (
-        <div className="ai-loading">
-          <Loader size={32} className="spin" />
-          <div className="ai-loading-text">{t('addLiquor.searching')}</div>
+      {/* Queue List */}
+      <div className="queue-section">
+        {items.length > 0 && (
+          <div className="queue-header">
+            <span className="queue-count">{items.length} item{items.length !== 1 ? 's' : ''}</span>
+            <Button variant="ghost" size="sm" icon={<Trash2 size={14} />} onClick={clearAll}>
+              {t('addLiquor.clearAll')}
+            </Button>
+          </div>
+        )}
+
+        {items.length === 0 && (
+          <div className="queue-empty">
+            <Wine size={32} className="queue-empty-icon" />
+            <div className="queue-empty-text">{t('addLiquor.queueEmpty')}</div>
+          </div>
+        )}
+
+        <div className="queue-list">
+          {items.map((item) => (
+            <QueueItem
+              key={item.id}
+              item={item}
+              expanded={expandedId === item.id}
+              locale={locale}
+              t={t}
+              saving={savingId === item.id}
+              imagePreview={imagePreviews[item.id]}
+              statusIcon={statusIcon(item.status)}
+              onToggle={() => toggleExpand(item.id)}
+              onRemove={() => removeItem(item.id)}
+              onRetry={() => retryItem(item.id)}
+              onSave={() => handleSave(item)}
+              onUploadClick={() => handleUploadClick(item.id)}
+            />
+          ))}
         </div>
-      )}
+      </div>
+    </div>
+  );
+}
 
-      {result && !loading && (
-        <div className="ai-preview">
-          <h2 className="ai-preview-title">{displayName}</h2>
+interface QueueItemProps {
+  item: SearchItem;
+  expanded: boolean;
+  locale: string;
+  t: (key: string) => string;
+  saving: boolean;
+  imagePreview?: string;
+  statusIcon: React.ReactNode;
+  onToggle: () => void;
+  onRemove: () => void;
+  onRetry: () => void;
+  onSave: () => void;
+  onUploadClick: () => void;
+}
 
+function QueueItem({
+  item,
+  expanded,
+  locale,
+  t,
+  saving,
+  imagePreview,
+  statusIcon,
+  onToggle,
+  onRemove,
+  onRetry,
+  onSave,
+  onUploadClick,
+}: QueueItemProps) {
+  const result = item.result;
+
+  const displayName = result
+    ? locale === 'ko' && result.nameKo
+      ? result.nameKo
+      : result.name
+    : item.query;
+
+  const displayType = result
+    ? locale === 'ko' && result.typeKo
+      ? result.typeKo
+      : result.type
+    : undefined;
+
+  const displayAbout = result
+    ? locale === 'ko' && result.aboutKo
+      ? result.aboutKo
+      : result.about
+    : undefined;
+
+  const displayHeritage = result
+    ? locale === 'ko' && result.heritageKo
+      ? result.heritageKo
+      : result.heritage
+    : undefined;
+
+  const displayTastingNotes = result
+    ? locale === 'ko' && result.tastingNotesKo
+      ? result.tastingNotesKo
+      : result.tastingNotes
+    : undefined;
+
+  const profile: LiquorProfile | undefined = result?.profile;
+
+  return (
+    <div className={`queue-item queue-item-${item.status}`}>
+      <div className="queue-item-header" onClick={item.status === 'done' ? onToggle : undefined}>
+        <div className="queue-item-left">
+          {statusIcon}
+          <div className="queue-item-info">
+            <span className="queue-item-name">{displayName}</span>
+            {item.status === 'pending' && (
+              <span className="queue-item-status">{t('addLiquor.pending')}</span>
+            )}
+            {item.status === 'searching' && (
+              <span className="queue-item-status">{t('addLiquor.searching')}</span>
+            )}
+            {item.status === 'error' && (
+              <span className="queue-item-status queue-item-status-error">{item.error}</span>
+            )}
+            {item.status === 'done' && displayType && (
+              <span className="queue-item-status">{displayType}</span>
+            )}
+          </div>
+        </div>
+        <div className="queue-item-actions">
+          {item.status === 'error' && (
+            <button className="queue-action-btn" onClick={onRetry} title={t('addLiquor.retry')}>
+              <RotateCcw size={14} />
+            </button>
+          )}
+          {item.status === 'done' && (
+            expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />
+          )}
+          {item.status !== 'searching' && (
+            <button className="queue-action-btn" onClick={onRemove} title={t('addLiquor.remove')}>
+              <X size={14} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      {expanded && result && (
+        <div className="queue-item-detail">
           <div className="preview-grid">
             <PreviewField label={t('addLiquor.type')} value={displayType} />
             <PreviewField label={t('addLiquor.category')} value={result.category} />
@@ -188,24 +365,19 @@ export function AddLiquorPage() {
             <div className="preview-section-title">{t('addLiquor.image')}</div>
             <div className="image-upload-area">
               <div className="image-preview">
-                {imagePreviewUrl ? (
-                  <img src={imagePreviewUrl} alt="Preview" />
+                {imagePreview ? (
+                  <img src={imagePreview} alt="Preview" />
+                ) : result.imageUrl ? (
+                  <img src={result.imageUrl} alt="AI Generated" />
                 ) : (
                   <Wine size={28} />
                 )}
               </div>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                className="image-upload-input"
-                onChange={handleImageChange}
-              />
               <Button
                 variant="secondary"
                 size="sm"
                 icon={<Upload size={14} />}
-                onClick={() => fileInputRef.current?.click()}
+                onClick={onUploadClick}
               >
                 {t('addLiquor.uploadImage')}
               </Button>
@@ -213,11 +385,8 @@ export function AddLiquorPage() {
           </div>
 
           <div className="add-actions">
-            <Button onClick={handleSave} disabled={saving}>
+            <Button onClick={onSave} disabled={saving}>
               {saving ? t('addLiquor.saving') : t('addLiquor.addToCollection')}
-            </Button>
-            <Button variant="ghost" onClick={reset}>
-              {t('addLiquor.reset')}
             </Button>
           </div>
         </div>

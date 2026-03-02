@@ -51,4 +51,5 @@ export interface AiSearchResult {
   heritageKo?: string;
   tastingNotesKo?: string[];
   suggestedImageKeyword?: string;
+  imageUrl?: string;
 }

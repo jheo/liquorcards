@@ -26,7 +26,9 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin")
     implementation("org.jetbrains.kotlin:kotlin-reflect")
     implementation("me.paulschwarz:spring-dotenv:4.0.0")
-    runtimeOnly("com.h2database:h2")
+    runtimeOnly("org.xerial:sqlite-jdbc:3.45.3.0")
+    implementation("org.hibernate.orm:hibernate-community-dialects:6.4.4.Final")
+    testRuntimeOnly("com.h2database:h2")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 

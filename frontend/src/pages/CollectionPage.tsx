@@ -27,14 +27,24 @@ export function CollectionPage() {
 
     if (search) {
       const q = search.toLowerCase();
-      result = result.filter(
-        (l) =>
-          l.name.toLowerCase().includes(q) ||
-          l.type?.toLowerCase().includes(q) ||
-          l.origin?.toLowerCase().includes(q) ||
-          l.nameKo?.toLowerCase().includes(q) ||
-          l.typeKo?.toLowerCase().includes(q)
-      );
+      result = result.filter((l) => {
+        if (l.name.toLowerCase().includes(q)) return true;
+        if (l.type?.toLowerCase().includes(q)) return true;
+        if (l.origin?.toLowerCase().includes(q)) return true;
+        if (l.nameKo?.toLowerCase().includes(q)) return true;
+        if (l.typeKo?.toLowerCase().includes(q)) return true;
+        if (l.about?.toLowerCase().includes(q)) return true;
+        if (l.aboutKo?.toLowerCase().includes(q)) return true;
+        if (l.heritage?.toLowerCase().includes(q)) return true;
+        if (l.heritageKo?.toLowerCase().includes(q)) return true;
+        if (l.region?.toLowerCase().includes(q)) return true;
+        if (l.age?.toLowerCase().includes(q)) return true;
+        if (l.price?.toLowerCase().includes(q)) return true;
+        if (l.tastingNotes?.some((n) => n.toLowerCase().includes(q))) return true;
+        if (l.tastingNotesKo?.some((n) => n.toLowerCase().includes(q))) return true;
+        if (l.profile && Object.keys(l.profile).some((k) => k.toLowerCase().includes(q))) return true;
+        return false;
+      });
     }
 
     if (category !== 'all') {

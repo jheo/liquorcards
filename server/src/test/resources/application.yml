@@ -28,3 +28,4 @@ app:
   ai:
     anthropic-api-key:
     openai-api-key:
+    google-api-key:

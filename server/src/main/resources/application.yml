@@ -3,25 +3,19 @@ server:
 
 spring:
   datasource:
-    url: jdbc:h2:file:./data/liquirdb
-    driver-class-name: org.h2.Driver
-    username: sa
-    password:
-  h2:
-    console:
-      enabled: true
-      path: /h2-console
+    url: jdbc:sqlite:./data/liquir.db
+    driver-class-name: org.sqlite.JDBC
   jpa:
     hibernate:
-      ddl-auto: create
+      ddl-auto: update
     show-sql: true
-    defer-datasource-initialization: true
+    database-platform: org.hibernate.community.dialect.SQLiteDialect
     properties:
       hibernate:
         format_sql: true
   sql:
     init:
-      mode: always
+      mode: never
   servlet:
     multipart:
       max-file-size: 10MB
@@ -32,3 +26,4 @@ app:
   ai:
     anthropic-api-key: ${ANTHROPIC_API_KEY:}
     openai-api-key: ${OPENAI_API_KEY:}
+    google-api-key: ${GOOGLE_API_KEY:}

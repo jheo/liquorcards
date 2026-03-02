@@ -109,7 +109,7 @@ describe('CollectionPage', () => {
   it('should render English search placeholder by default', () => {
     renderWithProviders(<CollectionPage />);
     expect(
-      screen.getByPlaceholderText('Search by name, type, or origin...')
+      screen.getByPlaceholderText('Search by name, type, origin, tasting notes, profile...')
     ).toBeInTheDocument();
   });
 
@@ -117,7 +117,7 @@ describe('CollectionPage', () => {
     localStorage.setItem('locale', 'ko');
     renderWithProviders(<CollectionPage />);
     expect(
-      screen.getByPlaceholderText('이름, 종류, 원산지로 검색...')
+      screen.getByPlaceholderText('이름, 종류, 원산지, 테이스팅 노트, 프로필로 검색...')
     ).toBeInTheDocument();
   });
 
@@ -141,7 +141,7 @@ describe('CollectionPage', () => {
 
   it('should filter by search query', () => {
     renderWithProviders(<CollectionPage />);
-    const searchInput = screen.getByPlaceholderText('Search by name, type, or origin...');
+    const searchInput = screen.getByPlaceholderText('Search by name, type, origin, tasting notes, profile...');
     fireEvent.change(searchInput, { target: { value: 'Hendricks' } });
     expect(screen.getByText('Hendricks Gin')).toBeInTheDocument();
     expect(screen.queryByText('Macallan 18')).not.toBeInTheDocument();
@@ -150,7 +150,7 @@ describe('CollectionPage', () => {
   it('should filter by Korean name when searching in Korean locale', () => {
     localStorage.setItem('locale', 'ko');
     renderWithProviders(<CollectionPage />);
-    const searchInput = screen.getByPlaceholderText('이름, 종류, 원산지로 검색...');
+    const searchInput = screen.getByPlaceholderText('이름, 종류, 원산지, 테이스팅 노트, 프로필로 검색...');
     fireEvent.change(searchInput, { target: { value: '헨드릭스' } });
     expect(screen.getByText('헨드릭스 진')).toBeInTheDocument();
     expect(screen.queryByText('맥캘란 18')).not.toBeInTheDocument();
@@ -183,7 +183,7 @@ describe('CollectionPage', () => {
 
   it('should show empty state when no results match filter', () => {
     renderWithProviders(<CollectionPage />);
-    const searchInput = screen.getByPlaceholderText('Search by name, type, or origin...');
+    const searchInput = screen.getByPlaceholderText('Search by name, type, origin, tasting notes, profile...');
     fireEvent.change(searchInput, { target: { value: 'xyznonexistent' } });
     expect(screen.getByText('No liquors found')).toBeInTheDocument();
     expect(screen.getByText('Try adjusting your search or filters')).toBeInTheDocument();

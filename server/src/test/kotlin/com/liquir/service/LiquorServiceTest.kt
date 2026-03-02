@@ -290,9 +290,9 @@ class LiquorServiceTest {
             liquorService.create(createKoreanLiquorRequest(name = "Macallan 12"))
             liquorService.create(createKoreanLiquorRequest(name = "Lagavulin 16", nameKo = "라가불린 16년"))
 
-            val results = liquorService.findAll(null, null, "Macallan", null)
+            val results = liquorService.findAll(null, null, "Lagavulin", null)
             assertEquals(1, results.size)
-            assertEquals("Macallan 12", results[0].name)
+            assertEquals("Lagavulin 16", results[0].name)
             assertNotNull(results[0].nameKo)
         }
 
