@@ -18,6 +18,7 @@ import {
   Search,
   FileText,
   Info,
+  Calendar,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { useSearchQueue } from '../hooks/SearchQueueContext';
@@ -30,7 +31,7 @@ import './AddLiquorPage.css';
 
 export function AddLiquorPage() {
   const navigate = useNavigate();
-  const { items, addSearch, removeItem, clearAll, retryItem } = useSearchQueue();
+  const { items, addSearch, removeItem, clearAll, retryItem, cancelItem, selectDisambiguation } = useSearchQueue();
   const { locale, t } = useLanguage();
   const [query, setQuery] = useState('');
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -91,6 +92,9 @@ export function AddLiquorPage() {
         origin: result.origin,
         region: result.region,
         volume: result.volume,
+        volumeMl: result.volumeMl,
+        priceUsd: result.priceUsd,
+        priceKrw: result.priceKrw,
         imageUrl,
         about: result.about,
         heritage: result.heritage,
@@ -119,7 +123,8 @@ export function AddLiquorPage() {
     }
   };
 
-  const handleSuggestionClick = (suggestionName: string) => {
+  const handleSuggestionClick = (itemId: string, suggestionName: string) => {
+    removeItem(itemId);
     addSearch(suggestionName);
   };
 
@@ -135,6 +140,10 @@ export function AddLiquorPage() {
         return <AlertCircle size={16} className="queue-icon queue-icon-not-found" />;
       case 'error':
         return <AlertCircle size={16} className="queue-icon queue-icon-error" />;
+      case 'cancelled':
+        return <X size={16} className="queue-icon queue-icon-cancelled" />;
+      case 'disambiguation':
+        return <Search size={16} className="queue-icon queue-icon-disambiguation" />;
     }
   };
 
@@ -204,9 +213,11 @@ export function AddLiquorPage() {
               onToggle={() => toggleExpand(item.id)}
               onRemove={() => removeItem(item.id)}
               onRetry={() => retryItem(item.id)}
+              onCancel={() => cancelItem(item.id)}
               onSave={() => handleSave(item)}
               onUploadClick={() => handleUploadClick(item.id)}
-              onSuggestionClick={handleSuggestionClick}
+              onSuggestionClick={(name) => handleSuggestionClick(item.id, name)}
+              onSelectDisambiguation={(name) => selectDisambiguation(item.id, name)}
             />
           ))}
         </div>
@@ -226,9 +237,11 @@ interface QueueItemProps {
   onToggle: () => void;
   onRemove: () => void;
   onRetry: () => void;
+  onCancel: () => void;
   onSave: () => void;
   onUploadClick: () => void;
   onSuggestionClick: (name: string) => void;
+  onSelectDisambiguation: (name: string) => void;
 }
 
 function QueueItem({
@@ -242,9 +255,11 @@ function QueueItem({
   onToggle,
   onRemove,
   onRetry,
+  onCancel,
   onSave,
   onUploadClick,
   onSuggestionClick,
+  onSelectDisambiguation,
 }: QueueItemProps) {
   const result = item.result;
 
@@ -294,7 +309,7 @@ function QueueItem({
 
   return (
     <div className={`queue-item queue-item-${item.status}`}>
-      <div className="queue-item-header" onClick={item.status === 'done' || item.status === 'not_found' ? onToggle : undefined}>
+      <div className="queue-item-header" onClick={item.status === 'done' || item.status === 'not_found' || item.status === 'disambiguation' ? onToggle : undefined}>
         <div className="queue-item-left">
           {statusIcon}
           <div className="queue-item-info">
@@ -314,6 +329,12 @@ function QueueItem({
             {item.status === 'error' && (
               <span className="queue-item-status queue-item-status-error">{item.error}</span>
             )}
+            {item.status === 'cancelled' && (
+              <span className="queue-item-status">{t('addLiquor.cancelled')}</span>
+            )}
+            {item.status === 'disambiguation' && (
+              <span className="queue-item-status">{t('addLiquor.disambiguation')}</span>
+            )}
             {item.status === 'done' && displayType && (
               <span className="queue-item-status">{displayType}</span>
             )}
@@ -327,12 +348,17 @@ function QueueItem({
           </div>
         </div>
         <div className="queue-item-actions">
-          {item.status === 'error' && (
+          {item.status === 'searching' && (
+            <button className="queue-action-btn" onClick={onCancel} title={t('addLiquor.cancel')}>
+              <X size={14} />
+            </button>
+          )}
+          {(item.status === 'error' || item.status === 'cancelled') && (
             <button className="queue-action-btn" onClick={onRetry} title={t('addLiquor.retry')}>
               <RotateCcw size={14} />
             </button>
           )}
-          {(item.status === 'done' || item.status === 'not_found') && (
+          {(item.status === 'done' || item.status === 'not_found' || item.status === 'disambiguation') && (
             expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />
           )}
           {item.status !== 'searching' && (
@@ -359,6 +385,45 @@ function QueueItem({
               <span>{locale === 'ko' ? step.messageKo : step.message}</span>
             </div>
           ))}
+        </div>
+      )}
+
+      {/* Disambiguation UI */}
+      {item.status === 'disambiguation' && item.disambiguationCandidates && (
+        <div className="queue-item-detail">
+          <div className="suggestions-section">
+            <div className="suggestions-header">
+              <Search size={16} />
+              <span>{t('addLiquor.disambiguation')}</span>
+            </div>
+            {item.disambiguationType === 'vintage' ? (
+              <VintageDisambiguation
+                candidates={item.disambiguationCandidates}
+                locale={locale}
+                t={t}
+                onSelect={onSelectDisambiguation}
+              />
+            ) : (
+              <div className="suggestions-list">
+                {item.disambiguationCandidates.map((candidate) => (
+                  <button
+                    key={candidate.name}
+                    className="suggestion-card"
+                    onClick={() => onSelectDisambiguation(candidate.name)}
+                  >
+                    <div className="suggestion-name">
+                      {locale === 'ko' && candidate.nameKo ? candidate.nameKo : candidate.name}
+                    </div>
+                    {candidate.description && (
+                      <div className="suggestion-reason">
+                        {locale === 'ko' && candidate.descriptionKo ? candidate.descriptionKo : candidate.description}
+                      </div>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -473,10 +538,20 @@ function QueueItem({
             <PreviewField label={t('addLiquor.abv')} value={result.abv ? `${result.abv}%` : undefined} />
             <PreviewField label={t('addLiquor.age')} value={result.age} />
             <PreviewField label={t('addLiquor.score')} value={result.score?.toString()} />
-            <PreviewField label={t('addLiquor.price')} value={result.price} />
+            <PreviewField
+              label={t('addLiquor.price')}
+              value={locale === 'ko' && result.priceKrw
+                ? `₩${result.priceKrw.toLocaleString()}`
+                : result.priceUsd
+                  ? `$${result.priceUsd.toFixed(0)}`
+                  : result.price}
+            />
             <PreviewField label={t('addLiquor.origin')} value={result.origin} />
             <PreviewField label={t('addLiquor.region')} value={result.region} />
-            <PreviewField label={t('addLiquor.volume')} value={result.volume} />
+            <PreviewField
+              label={t('addLiquor.volume')}
+              value={result.volumeMl ? `${result.volumeMl}ml` : result.volume}
+            />
           </div>
 
           {displayAbout && (
@@ -567,6 +642,85 @@ function QueueItem({
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function VintageDisambiguation({
+  candidates,
+  locale,
+  t,
+  onSelect,
+}: {
+  candidates: import('../types/liquor').DisambiguationCandidate[];
+  locale: string;
+  t: (key: string) => string;
+  onSelect: (name: string) => void;
+}) {
+  const [customYear, setCustomYear] = useState('');
+  const currentYear = new Date().getFullYear();
+
+  // Extract base name (without vintage year) from the first candidate
+  const baseName = candidates[0]?.name.replace(/\s+\d{4}$/, '') || candidates[0]?.name || '';
+
+  const handleCustomYearSubmit = () => {
+    const year = parseInt(customYear, 10);
+    if (year >= 1900 && year <= currentYear + 1) {
+      onSelect(`${baseName} ${year}`);
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleCustomYearSubmit();
+  };
+
+  const customYearValid = (() => {
+    const year = parseInt(customYear, 10);
+    return customYear.length === 4 && year >= 1900 && year <= currentYear + 1;
+  })();
+
+  return (
+    <div className="vintage-disambiguation">
+      <div className="vintage-label">
+        <Calendar size={14} />
+        <span>{t('addLiquor.selectVintage')}</span>
+      </div>
+      <div className="vintage-chips">
+        {candidates.filter(c => c.vintage).map((candidate) => (
+          <button
+            key={candidate.vintage}
+            className="vintage-chip"
+            onClick={() => onSelect(candidate.name)}
+          >
+            {candidate.vintage}
+          </button>
+        ))}
+      </div>
+      <div className="vintage-custom-row">
+        <input
+          className="input vintage-input"
+          type="number"
+          min={1900}
+          max={currentYear + 1}
+          placeholder={t('addLiquor.vintageInput')}
+          value={customYear}
+          onChange={(e) => setCustomYear(e.target.value)}
+          onKeyDown={handleKeyDown}
+        />
+        <Button
+          size="sm"
+          onClick={handleCustomYearSubmit}
+          disabled={!customYearValid}
+        >
+          OK
+        </Button>
+      </div>
+      <button
+        className="vintage-skip-btn"
+        onClick={() => onSelect(baseName)}
+      >
+        {t('addLiquor.searchWithoutVintage')}
+      </button>
     </div>
   );
 }

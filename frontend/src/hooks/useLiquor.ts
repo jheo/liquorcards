@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getLiquor } from '../api/client';
 import type { Liquor } from '../types/liquor';
 
@@ -7,7 +7,7 @@ export function useLiquor(id: number | undefined) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
+  const fetchLiquor = useCallback(() => {
     if (!id) return;
     setLoading(true);
     setError(null);
@@ -17,5 +17,9 @@ export function useLiquor(id: number | undefined) {
       .finally(() => setLoading(false));
   }, [id]);
 
-  return { liquor, loading, error };
+  useEffect(() => {
+    fetchLiquor();
+  }, [fetchLiquor]);
+
+  return { liquor, loading, error, refetch: fetchLiquor };
 }

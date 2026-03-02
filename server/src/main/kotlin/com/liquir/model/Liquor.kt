@@ -35,6 +35,12 @@ class Liquor(
 
     var volume: String? = null,
 
+    var volumeMl: Int? = null,
+
+    var priceUsd: Double? = null,
+
+    var priceKrw: Int? = null,
+
     @Column(length = 2000)
     var about: String? = null,
 

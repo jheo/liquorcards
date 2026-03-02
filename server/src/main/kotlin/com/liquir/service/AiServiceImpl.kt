@@ -5,6 +5,7 @@ import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.liquir.dto.AiLookupResponse
 import com.liquir.dto.CollectedSourceInfo
+import com.liquir.dto.DisambiguationCandidate
 import com.liquir.dto.SuggestionResponse
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
@@ -12,6 +13,7 @@ import org.springframework.http.HttpEntity
 import org.springframework.http.HttpHeaders
 import org.springframework.http.MediaType
 import org.springframework.stereotype.Service
+import org.springframework.http.client.SimpleClientHttpRequestFactory
 import org.springframework.web.client.RestTemplate
 
 @Service
@@ -26,7 +28,10 @@ class AiServiceImpl(
         factory.enable(JsonReadFeature.ALLOW_TRAILING_COMMA.mappedFeature())
         factory.enable(JsonReadFeature.ALLOW_MISSING_VALUES.mappedFeature())
     }
-    private val restTemplate = RestTemplate()
+    private val restTemplate = RestTemplate(SimpleClientHttpRequestFactory().apply {
+        setConnectTimeout(15_000)   // 15s connection timeout
+        setReadTimeout(120_000)     // 120s read timeout (Google Search grounding can be slow for Korean queries)
+    })
 
     // ========== Step 1: Google Search + Normalize + Collect ==========
 
@@ -71,10 +76,28 @@ class AiServiceImpl(
         === SOURCE URLS ===
         [One URL per line - source URLs where data was found]
 
+        === AMBIGUITY CHECK ===
+        AMBIGUOUS: [yes/no]
+        AMBIGUITY_TYPE: [vintage/expression/variant]
+          - vintage: same product with different vintages/years (mostly wine)
+          - expression: same brand with different expressions/ages (mostly whisky)
+          - variant: completely different products
+        [If yes, list up to 5 specific product variants/vintages/expressions found:]
+        CANDIDATE: [English name] | [Korean name or N/A] | [brief description] | [vintage year or N/A]
+        CANDIDATE: [English name] | [Korean name or N/A] | [brief description] | [vintage year or N/A]
+
         RULES:
         - Extract REAL data from Google Search results. Do not fabricate.
         - Include as much factual data as possible.
         - If a field is not found, write "N/A".
+        - AMBIGUITY — be VERY CONSERVATIVE. Default to AMBIGUOUS: no.
+          The test: "If a customer said this name in a liquor store, would the clerk immediately know which SINGLE bottle to grab?" If yes → AMBIGUOUS: no.
+          * AMBIGUOUS: no when the input includes a specific age, vintage, year, or expression (e.g. "발렌타인 30년", "Macallan 18", "Château Margaux 2015").
+          * AMBIGUOUS: no when there is ONE clearly dominant/flagship product for the brand (e.g. "메이커스 마크", "잭 다니엘", "노마드 아웃랜드", "헨드릭스 진", "탄커레이"). Just return the flagship.
+          * AMBIGUOUS: yes ONLY when the brand has MULTIPLE equally well-known products with NO single default (e.g. "발베니" could be 12, 14, 17, 21 — all equally popular; "맥캘란" could be 12, 18, 25).
+          * AMBIGUITY_TYPE "vintage" is ONLY for wines with different harvest years. NEVER for whisky, spirits, beer, or sake.
+          * AMBIGUITY_TYPE "expression" is for same brand with different age statements or sub-ranges.
+        - For CANDIDATE lines: the 4th field (vintage year) should be a 4-digit year (e.g. 2018) for wines ONLY, or "N/A" for everything else.
     """.trimIndent()
 
     /**
@@ -117,7 +140,9 @@ class AiServiceImpl(
         - Parse the text exactly as provided. Do not add information not present in the text.
         - "N/A" values should be omitted (not included in the JSON).
         - ABV must be a number (not a string).
-        - "results" must contain at least one item with all available data from the text.
+        - "results" must contain EXACTLY ONE item with the key factual data. Keep the description field to 2-3 sentences maximum.
+        - Keep "imageUrls" to at most 3 URLs and "sourceUrls" to at most 5 URLs.
+        - The ENTIRE JSON output must be COMPACT. Do not include unnecessary whitespace or verbose descriptions.
         - Return ONLY the JSON object, nothing else.
     """.trimIndent()
 
@@ -127,24 +152,45 @@ class AiServiceImpl(
         }
 
         return try {
-            // Phase 1: Google Search grounding → plain text
+            // Phase 1: Google Search grounding → plain text (with retry on timeout)
             val searchMessage = "Find detailed information about this alcoholic beverage: \"$userInput\". " +
                     "First identify the exact product, then find ABV, origin, region, price, tasting notes, reviews, and product images."
 
-            val rawText = callGeminiWithSearch(searchMessage, googleSearchTextPrompt)
+            val rawText = try {
+                callGeminiWithSearch(searchMessage, googleSearchTextPrompt)
+            } catch (e: Exception) {
+                if (e.message?.contains("timed out", ignoreCase = true) == true ||
+                    e.message?.contains("Read timed out", ignoreCase = true) == true) {
+                    log.warn("Phase 1 timed out for '{}', retrying once...", userInput)
+                    callGeminiWithSearch(searchMessage, googleSearchTextPrompt)
+                } else throw e
+            }
             log.info("Google Search raw text length for '{}': {} chars", userInput, rawText.length)
             log.debug("Google Search raw text: {}", rawText.take(500))
 
+            // Detect ambiguity from Phase 1 text (Task 1)
+            val isAmbiguous = rawText.contains(Regex("AMBIGUOUS:\\s*yes", RegexOption.IGNORE_CASE))
+            val candidates = if (isAmbiguous) parseAmbiguousCandidates(rawText) else emptyList()
+            val disambiguationType = if (isAmbiguous) {
+                Regex("AMBIGUITY_TYPE:\\s*(vintage|expression|variant)", RegexOption.IGNORE_CASE)
+                    .find(rawText)?.groupValues?.get(1)?.lowercase()
+            } else null
+
             // Phase 2: Convert text → valid JSON using Gemini with JSON mode (with retry)
+            // Truncate raw text to prevent output token overflow in Phase 2
+            val truncatedText = if (rawText.length > 10000) {
+                log.info("Truncating Phase 1 text from {} to 10000 chars for Phase 2", rawText.length)
+                rawText.take(10000) + "\n[... truncated for brevity]"
+            } else rawText
             val structureMessage = "Convert the following search results into a single JSON object. " +
-                    "The JSON must start with { and contain canonicalName as the first key.\n\n$rawText"
+                    "The JSON must start with { and contain canonicalName as the first key.\n\n$truncatedText"
             val parsed: Map<String, Any?> = try {
                 val jsonText = callGemini(structureMessage, googleSearchJsonPrompt)
-                mapper.readValue(cleanJson(jsonText))
+                parsePhase2Json(cleanJson(jsonText))
             } catch (e: Exception) {
                 log.warn("Phase 2 JSON conversion failed, retrying: {}", e.message)
                 val retryText = callGemini(structureMessage, googleSearchJsonPrompt)
-                mapper.readValue(cleanJson(retryText))
+                parsePhase2Json(cleanJson(retryText))
             }
 
             val canonicalName = parsed["canonicalName"] as? String ?: userInput
@@ -186,6 +232,20 @@ class AiServiceImpl(
             log.info("Google Search: '{}' → '{}' ({}), {} results, {} images",
                 userInput, canonicalName, category, results.size, imageUrls.size)
 
+            // Server-side heuristic: if canonical name closely matches the first candidate,
+            // the product is already identified — skip disambiguation
+            val effectivelyAmbiguous = isAmbiguous && candidates.size > 1 && run {
+                val first = candidates.first().name.lowercase().trim()
+                val canonical = canonicalName.lowercase().trim()
+                // Ambiguous only if canonical name does NOT closely match first candidate
+                !(canonical == first || first.startsWith(canonical) || canonical.startsWith(first))
+            }
+
+            if (isAmbiguous && !effectivelyAmbiguous && candidates.isNotEmpty()) {
+                log.info("Disambiguation skipped: canonical '{}' matches first candidate '{}'",
+                    canonicalName, candidates.first().name)
+            }
+
             GoogleSearchResult(
                 canonicalName = canonicalName,
                 canonicalNameKo = canonicalNameKo,
@@ -194,7 +254,10 @@ class AiServiceImpl(
                 confidence = confidence,
                 data = results,
                 imageUrls = imageUrls,
-                sources = sourceUrls
+                sources = sourceUrls,
+                isAmbiguous = effectivelyAmbiguous,
+                candidates = if (effectivelyAmbiguous) candidates else emptyList(),
+                disambiguationType = if (effectivelyAmbiguous) disambiguationType else null
             )
         } catch (e: IllegalStateException) {
             throw e
@@ -247,9 +310,12 @@ class AiServiceImpl(
         - age (string or null): e.g. "12 Years", "NAS"
         - score (integer): quality score out of 100
         - price (string): approximate retail price e.g. "${'$'}65"
+        - priceUsd (number or null): price in US dollars. If only KRW is known, convert at 1 USD = 1450 KRW.
+        - priceKrw (integer or null): price in Korean Won. If only USD is known, convert at 1 USD = 1450 KRW.
         - origin (string): country of origin
         - region (string): specific region e.g. "Speyside", "Bordeaux"
         - volume (string): standard bottle size e.g. "750ml"
+        - volumeMl (integer): volume in milliliters e.g. 750, 1000, 1750
         - about (string): 2-3 sentences describing the liquor in English
         - heritage (string): 2-3 sentences about origin and history in English
         - profile (object): category-specific scores from 0-100:
@@ -379,12 +445,24 @@ class AiServiceImpl(
         val bestRegion = data.mapNotNull { it.region }.firstOrNull()
         val bestPrice = data.mapNotNull { it.price }.firstOrNull()
 
+        // Parse volumeMl from collected volume strings
+        val collectedVolumeMl = data.mapNotNull { it.volume }.firstNotNullOfOrNull { parseVolumeToMl(it) }
+        val finalVolumeMl = collectedVolumeMl ?: result.volumeMl ?: parseVolumeToMl(bestVolume ?: result.volume)
+
+        // Parse priceUsd from collected price strings
+        val collectedPriceUsd = data.mapNotNull { it.price }.firstNotNullOfOrNull { parsePriceUsd(it) }
+        val finalPriceUsd = collectedPriceUsd ?: result.priceUsd ?: parsePriceUsd(bestPrice ?: result.price)
+        val finalPriceKrw = result.priceKrw ?: finalPriceUsd?.let { (it * 1450).toInt() }
+
         return result.copy(
             abv = bestAbv ?: result.abv,
             volume = bestVolume ?: result.volume,
+            volumeMl = finalVolumeMl,
             origin = bestOrigin ?: result.origin,
             region = bestRegion ?: result.region,
-            price = bestPrice ?: result.price
+            price = bestPrice ?: result.price,
+            priceUsd = finalPriceUsd,
+            priceKrw = finalPriceKrw
         )
     }
 
@@ -450,7 +528,7 @@ class AiServiceImpl(
             ),
             "generationConfig" to mapOf(
                 "temperature" to 0.2,
-                "maxOutputTokens" to 16384,
+                "maxOutputTokens" to 65536,
                 "responseMimeType" to "application/json"
             )
         )
@@ -481,7 +559,7 @@ class AiServiceImpl(
             "tools" to listOf(mapOf("googleSearch" to emptyMap<String, Any>())),
             "generationConfig" to mapOf(
                 "temperature" to 0.2,
-                "maxOutputTokens" to 16384
+                "maxOutputTokens" to 65536
             )
         )
 
@@ -588,6 +666,125 @@ class AiServiceImpl(
             i++
         }
         return sb.toString()
+    }
+
+    // ========== Phase 2 JSON Array Recovery (Task 4) ==========
+
+    /**
+     * Parse Phase 2 JSON, handling cases where Gemini returns an array instead of an object.
+     * - If it's already an object → return as-is
+     * - If it's an array of Maps → merge them into a single Map
+     * - If it's an array of Strings → use first item as canonicalName hint
+     */
+    internal fun parsePhase2Json(json: String): Map<String, Any?> {
+        val trimmed = json.trim()
+        if (trimmed.startsWith("{")) {
+            return mapper.readValue(trimmed)
+        }
+        if (trimmed.startsWith("[")) {
+            val arr: List<Any?> = mapper.readValue(trimmed)
+            if (arr.isEmpty()) throw RuntimeException("Phase 2 returned empty array")
+
+            // Array of Maps → merge
+            if (arr.first() is Map<*, *>) {
+                val merged = mutableMapOf<String, Any?>()
+                arr.filterIsInstance<Map<*, *>>().forEach { map ->
+                    map.forEach { (k, v) ->
+                        if (k is String && v != null && !merged.containsKey(k)) {
+                            merged[k] = v
+                        }
+                    }
+                }
+                if (merged.isNotEmpty()) return merged
+            }
+
+            // Array of Strings → treat first as canonicalName
+            if (arr.first() is String) {
+                return mapOf(
+                    "canonicalName" to arr.first(),
+                    "category" to "other",
+                    "searchQueries" to arr.filterIsInstance<String>(),
+                    "confidence" to 0.5,
+                    "results" to emptyList<Any>(),
+                    "imageUrls" to emptyList<Any>(),
+                    "sourceUrls" to emptyList<Any>()
+                )
+            }
+
+            throw RuntimeException("Phase 2 returned unexpected array content")
+        }
+        return mapper.readValue(trimmed)
+    }
+
+    // ========== Ambiguity Detection (Task 1) ==========
+
+    private fun parseAmbiguousCandidates(rawText: String): List<DisambiguationCandidate> {
+        val candidates = mutableListOf<DisambiguationCandidate>()
+        val pattern = Regex("CANDIDATE:\\s*(.+?)\\s*\\|\\s*(.+?)\\s*\\|\\s*(.+?)(?:\\s*\\|\\s*(.+))?$")
+        for (line in rawText.lines()) {
+            val match = pattern.find(line.trim()) ?: continue
+            val name = match.groupValues[1].trim()
+            val nameKo = match.groupValues[2].trim()
+            val desc = match.groupValues[3].trim()
+            val vintageStr = match.groupValues.getOrNull(4)?.trim()
+            val vintage = vintageStr?.takeIf { it != "N/A" && it.isNotBlank() }?.toIntOrNull()
+            candidates.add(DisambiguationCandidate(
+                name = name,
+                nameKo = nameKo.takeIf { it != "N/A" },
+                description = desc,
+                descriptionKo = null,
+                vintage = vintage
+            ))
+        }
+        return candidates
+    }
+
+    // ========== Volume / Price Parsing Helpers (Task 2, 8) ==========
+
+    internal fun parseVolumeToMl(volumeStr: String?): Int? {
+        if (volumeStr.isNullOrBlank()) return null
+        val s = volumeStr.trim().lowercase()
+        // "750ml" or "750 ml"
+        Regex("(\\d+)\\s*ml").find(s)?.let {
+            return it.groupValues[1].toIntOrNull()
+        }
+        // "1L", "1.75L", "1.75 L"
+        Regex("([\\d.]+)\\s*l(?:iter|itre)?s?").find(s)?.let {
+            val liters = it.groupValues[1].toDoubleOrNull() ?: return null
+            return (liters * 1000).toInt()
+        }
+        // "75cl"
+        Regex("(\\d+)\\s*cl").find(s)?.let {
+            val cl = it.groupValues[1].toIntOrNull() ?: return null
+            return cl * 10
+        }
+        return null
+    }
+
+    internal fun parsePriceUsd(priceStr: String?): Double? {
+        if (priceStr.isNullOrBlank()) return null
+        val s = priceStr.trim()
+        // "$65", "$65.99", "US$65", "USD 65"
+        Regex("\\$\\s*([\\d,]+\\.?\\d*)").find(s)?.let {
+            return it.groupValues[1].replace(",", "").toDoubleOrNull()
+        }
+        Regex("USD\\s*([\\d,]+\\.?\\d*)", RegexOption.IGNORE_CASE).find(s)?.let {
+            return it.groupValues[1].replace(",", "").toDoubleOrNull()
+        }
+        // "₩45,000" or "45000원" → convert to USD
+        Regex("[₩￦]\\s*([\\d,]+)").find(s)?.let {
+            val krw = it.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null
+            return krw / 1450.0
+        }
+        Regex("([\\d,]+)\\s*원").find(s)?.let {
+            val krw = it.groupValues[1].replace(",", "").toDoubleOrNull() ?: return null
+            return krw / 1450.0
+        }
+        // Plain number → assume USD
+        Regex("^[\\d,]+\\.?\\d*$").find(s)?.let {
+            return it.value.replace(",", "").toDoubleOrNull()
+        }
+        return null
     }
 
 }

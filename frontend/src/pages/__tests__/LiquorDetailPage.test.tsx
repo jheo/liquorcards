@@ -18,6 +18,7 @@ import { deleteLiquor, updateStatus } from '../../api/client';
 vi.mock('../../api/client', () => ({
   deleteLiquor: vi.fn(() => Promise.resolve()),
   updateStatus: vi.fn(() => Promise.resolve()),
+  updateLiquor: vi.fn(() => Promise.resolve({ data: {} })),
   getLiquor: vi.fn(),
 }));
 
@@ -78,6 +79,7 @@ describe('LiquorDetailPage - English (full data)', () => {
       liquor: fullLiquor as any,
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
   });
 
@@ -191,6 +193,7 @@ describe('LiquorDetailPage - with image', () => {
       liquor: liquorWithImage as any,
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
   });
 
@@ -209,6 +212,7 @@ describe('LiquorDetailPage - Loading', () => {
       liquor: null,
       loading: true,
       error: null,
+      refetch: vi.fn(),
     });
   });
 
@@ -227,6 +231,7 @@ describe('LiquorDetailPage - Korean (full data)', () => {
       liquor: fullLiquor as any,
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
   });
 
@@ -273,6 +278,7 @@ describe('LiquorDetailPage - Korean fallback (no Korean fields)', () => {
       liquor: liquorWithoutKorean as any,
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
   });
 
@@ -302,6 +308,7 @@ describe('LiquorDetailPage - Not found', () => {
       liquor: null,
       loading: false,
       error: null,
+      refetch: vi.fn(),
     });
   });
 

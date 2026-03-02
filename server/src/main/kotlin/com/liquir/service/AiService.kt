@@ -1,6 +1,7 @@
 package com.liquir.service
 
 import com.liquir.dto.AiLookupResponse
+import com.liquir.dto.DisambiguationCandidate
 import com.liquir.dto.SuggestionResponse
 
 /**
@@ -14,7 +15,10 @@ data class GoogleSearchResult(
     val confidence: Double,
     val data: List<ExternalLookupData>,
     val imageUrls: List<String>,
-    val sources: List<String>
+    val sources: List<String>,
+    val isAmbiguous: Boolean = false,
+    val candidates: List<DisambiguationCandidate> = emptyList(),
+    val disambiguationType: String? = null
 )
 
 interface AiService {

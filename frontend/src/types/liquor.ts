@@ -7,9 +7,12 @@ export interface Liquor {
   age?: string;
   score?: number;
   price?: string;
+  priceUsd?: number;
+  priceKrw?: number;
   origin?: string;
   region?: string;
   volume?: string;
+  volumeMl?: number;
   imageUrl?: string;
   about?: string;
   heritage?: string;
@@ -43,6 +46,14 @@ export interface CollectedSourceInfo {
   originalTexts?: Record<string, string>;
 }
 
+export interface DisambiguationCandidate {
+  name: string;
+  nameKo?: string;
+  description?: string;
+  descriptionKo?: string;
+  vintage?: number;
+}
+
 export interface AiSearchResult {
   name: string;
   type: string;
@@ -51,9 +62,12 @@ export interface AiSearchResult {
   age?: string;
   score?: number;
   price?: string;
+  priceUsd?: number;
+  priceKrw?: number;
   origin?: string;
   region?: string;
   volume?: string;
+  volumeMl?: number;
   about?: string;
   heritage?: string;
   profile?: LiquorProfile;

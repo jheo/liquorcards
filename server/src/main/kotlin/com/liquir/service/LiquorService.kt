@@ -54,9 +54,12 @@ class LiquorService(
         request.age?.let { liquor.age = it }
         request.score?.let { liquor.score = it }
         request.price?.let { liquor.price = it }
+        request.priceUsd?.let { liquor.priceUsd = it }
+        request.priceKrw?.let { liquor.priceKrw = it }
         request.origin?.let { liquor.origin = it }
         request.region?.let { liquor.region = it }
         request.volume?.let { liquor.volume = it }
+        request.volumeMl?.let { liquor.volumeMl = it }
         request.about?.let { liquor.about = it }
         request.heritage?.let { liquor.heritage = it }
         request.profile?.let { liquor.profileJson = mapper.writeValueAsString(it) }

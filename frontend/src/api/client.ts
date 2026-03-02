@@ -1,5 +1,5 @@
 import axios from 'axios';
-import type { Liquor, AiSearchResult } from '../types/liquor';
+import type { Liquor, AiSearchResult, DisambiguationCandidate } from '../types/liquor';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -35,12 +35,101 @@ export interface SseCallbacks {
   onDone: (result: AiSearchResult) => void;
   onNotFound: (suggestions: unknown) => void;
   onError: (error: string) => void;
+  onDisambiguation?: (candidates: DisambiguationCandidate[], type?: string) => void;
 }
 
 export function aiSearchStream(name: string, callbacks: SseCallbacks): () => void {
   const controller = new AbortController();
 
   fetch('/api/liquors/ai-lookup-stream', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name }),
+    signal: controller.signal,
+  })
+    .then(async (response) => {
+      if (!response.ok) {
+        callbacks.onError(`HTTP ${response.status}`);
+        return;
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        callbacks.onError('No response body');
+        return;
+      }
+
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let currentEvent = '';
+      let dataBuffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+        for (const line of lines) {
+          if (line.startsWith('event:')) {
+            currentEvent = line.slice(6).trim();
+            dataBuffer = '';
+          } else if (line.startsWith('data:')) {
+            dataBuffer += line.slice(5).trim();
+            if (!dataBuffer) continue;
+            try {
+              const parsed = JSON.parse(dataBuffer);
+              switch (currentEvent) {
+                case 'progress':
+                  callbacks.onProgress(parsed);
+                  break;
+                case 'done': {
+                  const { resultId } = parsed;
+                  const res = await fetch(`/api/liquors/search-result/${resultId}`);
+                  if (!res.ok) {
+                    callbacks.onError(`Failed to fetch result: HTTP ${res.status}`);
+                    break;
+                  }
+                  const fullResult = await res.json();
+                  callbacks.onDone(fullResult);
+                  break;
+                }
+                case 'disambiguation':
+                  callbacks.onDisambiguation?.(parsed.candidates || [], parsed.disambiguationType);
+                  break;
+                case 'not_found':
+                  callbacks.onNotFound(parsed);
+                  break;
+                case 'error':
+                  callbacks.onError(parsed.error || 'Unknown error');
+                  break;
+              }
+              currentEvent = '';
+              dataBuffer = '';
+            } catch {
+              // JSON incomplete — keep accumulating in dataBuffer
+            }
+          } else if (line.trim() === '') {
+            currentEvent = '';
+            dataBuffer = '';
+          }
+        }
+      }
+    })
+    .catch((err) => {
+      if (err.name !== 'AbortError') {
+        callbacks.onError(err.message || 'Stream failed');
+      }
+    });
+
+  return () => controller.abort();
+}
+
+export function aiSearchStreamWithSelection(name: string, callbacks: SseCallbacks): () => void {
+  const controller = new AbortController();
+
+  fetch('/api/liquors/ai-lookup-stream/select', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ name }),
@@ -104,7 +193,7 @@ export function aiSearchStream(name: string, callbacks: SseCallbacks): () => voi
               currentEvent = '';
               dataBuffer = '';
             } catch {
-              // JSON incomplete — keep accumulating in dataBuffer
+              // JSON incomplete — keep accumulating
             }
           } else if (line.trim() === '') {
             currentEvent = '';

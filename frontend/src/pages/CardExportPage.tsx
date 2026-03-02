@@ -10,7 +10,7 @@ import { useLanguage } from '../i18n/LanguageContext';
 import type { Liquor } from '../types/liquor';
 import './CardExportPage.css';
 
-const CARDS_PER_PAGE = 4;
+const CARDS_PER_PAGE = 2;
 
 export function CardExportPage() {
   const { liquors } = useLiquors();
@@ -64,7 +64,7 @@ export function CardExportPage() {
     setExporting(true);
 
     try {
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
       const pages = Math.ceil(selectedLiquors.length / CARDS_PER_PAGE);
 
       for (let p = 0; p < pages; p++) {

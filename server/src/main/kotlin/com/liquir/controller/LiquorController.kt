@@ -174,7 +174,11 @@ class LiquorController(
      */
     @PostMapping("/ai-lookup-stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun aiLookupStream(@RequestBody request: AiLookupRequest): SseEmitter {
-        val emitter = SseEmitter(120_000L)
+        return aiLookupStreamInternal(request, skipDisambiguation = false)
+    }
+
+    private fun aiLookupStreamInternal(request: AiLookupRequest, skipDisambiguation: Boolean): SseEmitter {
+        val emitter = SseEmitter(300_000L)
 
         sseExecutor.execute {
             try {
@@ -208,6 +212,19 @@ class LiquorController(
                     "${request.name} → ${googleResult.canonicalName} (${googleResult.category}), ${googleResult.data.size} sources found",
                     "${request.name} → ${googleResult.canonicalName} (${googleResult.category}), ${googleResult.data.size}개 소스 발견"
                 )
+
+                // Disambiguation check (Task 1) — skip if user already selected a candidate
+                if (!skipDisambiguation && googleResult.isAmbiguous && googleResult.candidates.size > 1) {
+                    val disambiguationJson = mapper.writeValueAsString(mapOf(
+                        "candidates" to googleResult.candidates,
+                        "disambiguationType" to googleResult.disambiguationType
+                    ))
+                    synchronized(emitterLock) {
+                        emitter.send(SseEmitter.event().name("disambiguation").data(disambiguationJson))
+                    }
+                    emitter.complete()
+                    return@execute
+                }
 
                 // Step 2: External DB search
                 sendProgress(
@@ -315,5 +332,14 @@ class LiquorController(
         }
 
         return emitter
+    }
+
+    /**
+     * Disambiguation selection: user picks a specific product from ambiguous results.
+     * Re-runs the full pipeline with the selected name, skipping disambiguation.
+     */
+    @PostMapping("/ai-lookup-stream/select", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
+    fun aiLookupStreamSelect(@RequestBody request: AiLookupRequest): SseEmitter {
+        return aiLookupStreamInternal(request, skipDisambiguation = true)
     }
 }
