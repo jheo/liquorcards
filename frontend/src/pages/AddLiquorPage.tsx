@@ -20,7 +20,6 @@ import {
   Info,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
-import { Chip } from '../components/ui/Chip';
 import { useSearchQueue } from '../hooks/SearchQueueContext';
 import type { SearchItem } from '../hooks/SearchQueueContext';
 import { createLiquor, uploadImage } from '../api/client';
@@ -34,7 +33,6 @@ export function AddLiquorPage() {
   const { items, addSearch, removeItem, clearAll, retryItem } = useSearchQueue();
   const { locale, t } = useLanguage();
   const [query, setQuery] = useState('');
-  const [provider, setProvider] = useState('claude');
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [savingId, setSavingId] = useState<string | null>(null);
   const [imageFiles, setImageFiles] = useState<Record<string, File>>({});
@@ -44,7 +42,7 @@ export function AddLiquorPage() {
 
   const handleSearch = () => {
     if (!query.trim()) return;
-    addSearch(query.trim(), provider);
+    addSearch(query.trim());
     setQuery('');
   };
 
@@ -122,7 +120,7 @@ export function AddLiquorPage() {
   };
 
   const handleSuggestionClick = (suggestionName: string) => {
-    addSearch(suggestionName, provider);
+    addSearch(suggestionName);
   };
 
   const statusIcon = (status: SearchItem['status']) => {
@@ -162,10 +160,6 @@ export function AddLiquorPage() {
           >
             {t('addLiquor.search')}
           </Button>
-        </div>
-        <div className="ai-provider-toggle">
-          <Chip label="Claude" active={provider === 'claude'} onClick={() => setProvider('claude')} />
-          <Chip label="OpenAI" active={provider === 'openai'} onClick={() => setProvider('openai')} />
         </div>
       </div>
 

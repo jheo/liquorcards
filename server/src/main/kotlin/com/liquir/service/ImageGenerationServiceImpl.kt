@@ -6,7 +6,6 @@ import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
 import java.net.URI
-import java.net.URLEncoder
 import java.net.http.HttpClient
 import java.net.http.HttpRequest
 import java.net.http.HttpResponse
@@ -18,7 +17,6 @@ import java.util.*
 @Service
 class ImageGenerationServiceImpl(
     @Value("\${app.ai.google-api-key:}") private val googleApiKey: String,
-    @Value("\${app.ai.google-cse-id:}") private val googleCseId: String,
     @Value("\${app.upload-dir:uploads}") private val uploadDir: String
 ) : ImageGenerationService {
 
@@ -39,10 +37,9 @@ class ImageGenerationServiceImpl(
         }
 
         return try {
-            // Step 1: Collect reference images from external DB sources
             val referenceImages = mutableListOf<String>()
 
-            for (url in externalImageUrls.take(3)) {
+            for (url in externalImageUrls.take(4)) {
                 val base64 = downloadImageAsBase64(url)
                 if (base64 != null) {
                     referenceImages.add(base64)
@@ -50,15 +47,8 @@ class ImageGenerationServiceImpl(
                 }
             }
 
-            // Step 2: Collect more reference images from Google CSE if needed
-            if (referenceImages.size < 3) {
-                val cseImages = collectReferenceImages(keyword)
-                referenceImages.addAll(cseImages.take(4 - referenceImages.size))
-            }
-
             logger.info("Total {} reference images for '{}'", referenceImages.size, keyword)
 
-            // Step 3: Generate high-quality bottle image with Gemini
             if (referenceImages.isNotEmpty()) {
                 generateWithMultipleReferences(referenceImages, keyword, bottleVisualDescription)
             } else {
@@ -68,52 +58,6 @@ class ImageGenerationServiceImpl(
             logger.error("Image generation failed: {}", e.message, e)
             null
         }
-    }
-
-    /**
-     * Collect multiple reference images from Google CSE.
-     * External DB images are passed separately via collectExternalImages.
-     */
-    private fun collectReferenceImages(keyword: String): List<String> {
-        val images = mutableListOf<String>()
-
-        if (googleCseId.isBlank()) return images
-
-        try {
-            val encodedQuery = URLEncoder.encode("$keyword bottle product", Charsets.UTF_8)
-            val url = "https://www.googleapis.com/customsearch/v1" +
-                    "?key=$googleApiKey&cx=$googleCseId&searchType=image" +
-                    "&q=$encodedQuery&num=5&imgSize=large&imgType=photo"
-
-            val request = HttpRequest.newBuilder()
-                .uri(URI.create(url))
-                .GET()
-                .timeout(Duration.ofSeconds(10))
-                .build()
-
-            val response = httpClient.send(request, HttpResponse.BodyHandlers.ofString())
-
-            if (response.statusCode() != 200) {
-                logger.warn("Google CSE search failed with status {}", response.statusCode())
-                return images
-            }
-
-            val responseJson: Map<String, Any> = mapper.readValue(response.body())
-            val items = responseJson["items"] as? List<*> ?: return images
-
-            for (item in items.take(4)) {
-                val itemMap = item as? Map<*, *> ?: continue
-                val imageLink = itemMap["link"] as? String ?: continue
-                val base64 = downloadImageAsBase64(imageLink)
-                if (base64 != null) {
-                    images.add(base64)
-                }
-            }
-        } catch (e: Exception) {
-            logger.warn("Reference image collection failed for '{}': {}", keyword, e.message)
-        }
-
-        return images
     }
 
     /**
@@ -229,7 +173,7 @@ $bottleVisualDescription
     }
 
     private fun callGeminiAndSave(requestBody: String): String? {
-        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=$googleApiKey"
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-3-pro-image-preview:generateContent?key=$googleApiKey"
 
         val request = HttpRequest.newBuilder()
             .uri(URI.create(url))

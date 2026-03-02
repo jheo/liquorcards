@@ -1,12 +1,11 @@
 package com.liquir.service
 
+import com.fasterxml.jackson.core.json.JsonReadFeature
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.liquir.dto.AiLookupResponse
 import com.liquir.dto.CollectedSourceInfo
-import com.liquir.dto.NormalizedQuery
 import com.liquir.dto.SuggestionResponse
-import com.liquir.dto.LiquorSuggestion
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.http.HttpEntity
@@ -17,56 +16,204 @@ import org.springframework.web.client.RestTemplate
 
 @Service
 class AiServiceImpl(
-    @Value("\${app.ai.anthropic-api-key:}") private val claudeApiKey: String,
-    @Value("\${app.ai.openai-api-key:}") private val openaiApiKey: String
+    @Value("\${app.ai.google-api-key:}") private val googleApiKey: String
 ) : AiService {
 
     private val log = LoggerFactory.getLogger(AiServiceImpl::class.java)
-    private val mapper = jacksonObjectMapper()
+    private val mapper = jacksonObjectMapper().apply {
+        // Gemini often returns JSON with raw control characters and minor syntax issues
+        factory.enable(JsonReadFeature.ALLOW_UNESCAPED_CONTROL_CHARS.mappedFeature())
+        factory.enable(JsonReadFeature.ALLOW_TRAILING_COMMA.mappedFeature())
+        factory.enable(JsonReadFeature.ALLOW_MISSING_VALUES.mappedFeature())
+    }
     private val restTemplate = RestTemplate()
 
-    // ========== Step 1: Normalize Query ==========
+    // ========== Step 1: Google Search + Normalize + Collect ==========
 
-    private val normalizePrompt = """
-        You are an expert on alcoholic beverages worldwide. Your task is to identify the exact canonical name of a liquor from the user's input.
+    /**
+     * Phase 1 prompt: ask Gemini to search and return PLAIN TEXT (not JSON).
+     * Google Search grounding is incompatible with responseMimeType=json,
+     * so we collect data as structured text first.
+     */
+    private val googleSearchTextPrompt = """
+        You are a bilingual (English/Korean) expert on alcoholic beverages worldwide.
+        The user will give you an informal or partial name of an alcoholic beverage.
+        Using Google Search, identify the exact product and extract as much factual data as possible.
 
-        The user may input:
-        - Korean name (e.g., "발베니 12년 더블우드")
-        - Partial name (e.g., "macallan 12")
-        - Misspelled name (e.g., "glenfidich")
-        - Informal reference (e.g., "산토리 가쿠빈")
+        The user input may be Korean name, partial name, abbreviation, misspelling, or informal reference.
+        Use Google Search to find the REAL, correct product. Do NOT guess.
 
-        Return a JSON object with:
-        - canonicalName (string): The exact official English name (e.g., "Balvenie 12 Year Old DoubleWood")
-        - canonicalNameKo (string): Korean name (e.g., "발베니 12년 더블우드")
-        - category (string): one of "whisky", "wine", "gin", "vodka", "rum", "tequila", "brandy", "beer", "liqueur", "sake", "soju", "other"
-        - searchQueries (array of strings): 3-5 search query variations to use when searching databases. Include:
-          * The exact canonical English name
-          * Brand + product shorthand (e.g., "Balvenie DoubleWood 12")
-          * Just the brand name (e.g., "Balvenie")
-          * Any common alternative names or spellings
-        - confidence (number 0-1): How confident you are that you correctly identified the product. 1.0 = certain, 0.5 = unsure
+        Return your findings in this EXACT plain-text format (use the headers exactly as shown):
 
-        Return ONLY valid JSON, no markdown, no explanation.
+        === IDENTIFICATION ===
+        Canonical Name: [exact official English product name]
+        Korean Name: [Korean name or "N/A"]
+        Category: [one of: whisky, wine, gin, vodka, rum, tequila, brandy, beer, liqueur, sake, soju, other]
+        Confidence: [number 0.0-1.0]
+        Search Queries: [comma-separated list of 3-5 search query variations]
+
+        === PRODUCT DATA ===
+        Brand: [brand name]
+        ABV: [number or "N/A"]
+        Volume: [e.g. "750ml" or "N/A"]
+        Origin: [country]
+        Region: [specific region or "N/A"]
+        Price: [approximate retail price or "N/A"]
+        Style: [e.g. "Single Malt Scotch Whisky" or "N/A"]
+        Description: [2-4 sentences about the product from search results]
+
+        === TASTING NOTES ===
+        [Any tasting notes, reviews, or flavor descriptions found in search results]
+
+        === IMAGE URLS ===
+        [One URL per line - product image URLs found in search results]
+
+        === SOURCE URLS ===
+        [One URL per line - source URLs where data was found]
+
+        RULES:
+        - Extract REAL data from Google Search results. Do not fabricate.
+        - Include as much factual data as possible.
+        - If a field is not found, write "N/A".
     """.trimIndent()
 
-    override fun normalizeQuery(userInput: String, provider: String): NormalizedQuery {
-        val responseText = callAi("Identify this alcoholic beverage: $userInput", normalizePrompt, provider)
-        val cleaned = cleanJson(responseText)
+    /**
+     * Phase 2 prompt: convert the plain-text search results into structured JSON.
+     * This call uses responseMimeType=json for guaranteed valid JSON.
+     */
+    private val googleSearchJsonPrompt = """
+        You are a data structuring assistant. Convert the provided search results text into a single JSON OBJECT (NOT an array).
+
+        The output MUST be a JSON object starting with { and ending with }.
+        It MUST contain ALL of these top-level keys:
+        {
+          "canonicalName": "exact official English product name",
+          "canonicalNameKo": "Korean name or null",
+          "category": "one of: whisky, wine, gin, vodka, rum, tequila, brandy, beer, liqueur, sake, soju, other",
+          "searchQueries": ["query1", "query2", "query3"],
+          "confidence": 0.9,
+          "results": [
+            {
+              "name": "product name",
+              "brand": "brand name",
+              "category": "category",
+              "abv": 40.0,
+              "volume": "700ml",
+              "origin": "country",
+              "region": "region",
+              "price": "price string",
+              "description": "description text",
+              "style": "style type",
+              "source": "google_search"
+            }
+          ],
+          "imageUrls": ["url1", "url2"],
+          "sourceUrls": ["url1", "url2"]
+        }
+
+        CRITICAL RULES:
+        - Output MUST be a JSON object { }, NOT an array [ ].
+        - "canonicalName" is REQUIRED and must be the first key.
+        - Parse the text exactly as provided. Do not add information not present in the text.
+        - "N/A" values should be omitted (not included in the JSON).
+        - ABV must be a number (not a string).
+        - "results" must contain at least one item with all available data from the text.
+        - Return ONLY the JSON object, nothing else.
+    """.trimIndent()
+
+    override fun searchWithGoogle(userInput: String): GoogleSearchResult {
+        if (googleApiKey.isBlank()) {
+            throw IllegalStateException("Google API key is not configured. Set GOOGLE_API_KEY environment variable.")
+        }
+
         return try {
-            mapper.readValue<NormalizedQuery>(cleaned)
+            // Phase 1: Google Search grounding → plain text
+            val searchMessage = "Find detailed information about this alcoholic beverage: \"$userInput\". " +
+                    "First identify the exact product, then find ABV, origin, region, price, tasting notes, reviews, and product images."
+
+            val rawText = callGeminiWithSearch(searchMessage, googleSearchTextPrompt)
+            log.info("Google Search raw text length for '{}': {} chars", userInput, rawText.length)
+            log.debug("Google Search raw text: {}", rawText.take(500))
+
+            // Phase 2: Convert text → valid JSON using Gemini with JSON mode (with retry)
+            val structureMessage = "Convert the following search results into a single JSON object. " +
+                    "The JSON must start with { and contain canonicalName as the first key.\n\n$rawText"
+            val parsed: Map<String, Any?> = try {
+                val jsonText = callGemini(structureMessage, googleSearchJsonPrompt)
+                mapper.readValue(cleanJson(jsonText))
+            } catch (e: Exception) {
+                log.warn("Phase 2 JSON conversion failed, retrying: {}", e.message)
+                val retryText = callGemini(structureMessage, googleSearchJsonPrompt)
+                mapper.readValue(cleanJson(retryText))
+            }
+
+            val canonicalName = parsed["canonicalName"] as? String ?: userInput
+            val canonicalNameKo = parsed["canonicalNameKo"] as? String
+            val category = parsed["category"] as? String ?: "other"
+            @Suppress("UNCHECKED_CAST")
+            val searchQueries = (parsed["searchQueries"] as? List<String>) ?: listOf(canonicalName)
+            val confidence = (parsed["confidence"] as? Number)?.toDouble() ?: 0.5
+
+            val results = (parsed["results"] as? List<*>)?.mapNotNull { item ->
+                val map = item as? Map<*, *> ?: return@mapNotNull null
+                try {
+                    @Suppress("UNCHECKED_CAST")
+                    val extra = (map["extra"] as? Map<String, Any?>) ?: emptyMap()
+                    ExternalLookupData(
+                        name = map["name"] as? String,
+                        brand = map["brand"] as? String,
+                        category = map["category"] as? String,
+                        abv = (map["abv"] as? Number)?.toDouble(),
+                        volume = map["volume"] as? String,
+                        origin = map["origin"] as? String,
+                        region = map["region"] as? String,
+                        price = map["price"] as? String,
+                        description = map["description"] as? String,
+                        imageUrl = map["imageUrl"] as? String,
+                        style = map["style"] as? String,
+                        source = (map["source"] as? String) ?: "google_search",
+                        extra = extra
+                    )
+                } catch (e: Exception) {
+                    log.warn("Failed to parse Google Search result item: {}", e.message)
+                    null
+                }
+            } ?: emptyList()
+
+            val imageUrls = (parsed["imageUrls"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+            val sourceUrls = (parsed["sourceUrls"] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
+
+            log.info("Google Search: '{}' → '{}' ({}), {} results, {} images",
+                userInput, canonicalName, category, results.size, imageUrls.size)
+
+            GoogleSearchResult(
+                canonicalName = canonicalName,
+                canonicalNameKo = canonicalNameKo,
+                category = category,
+                searchQueries = searchQueries,
+                confidence = confidence,
+                data = results,
+                imageUrls = imageUrls,
+                sources = sourceUrls
+            )
+        } catch (e: IllegalStateException) {
+            throw e
         } catch (e: Exception) {
-            log.warn("Failed to parse normalized query, using input as-is: {}", e.message)
-            NormalizedQuery(
+            log.warn("Google Search grounding failed for '{}': {}", userInput, e.message)
+            GoogleSearchResult(
                 canonicalName = userInput,
+                canonicalNameKo = null,
                 category = "other",
                 searchQueries = listOf(userInput),
-                confidence = 0.5
+                confidence = 0.0,
+                data = emptyList(),
+                imageUrls = emptyList(),
+                sources = emptyList()
             )
         }
     }
 
-    // ========== Step 3a: Synthesize Data ==========
+    // ========== Step 3: Synthesize Data ==========
 
     private val synthesizePrompt = """
         You are a bilingual (English/Korean) liquor expert. You are given DATA COLLECTED FROM MULTIPLE EXTERNAL SOURCES about an alcoholic beverage.
@@ -135,25 +282,21 @@ class AiServiceImpl(
 
     override fun synthesizeData(
         name: String,
-        collectedData: List<ExternalLookupData>,
-        provider: String
+        collectedData: List<ExternalLookupData>
     ): AiLookupResponse {
         val prompt = buildSynthesizePrompt(name, collectedData)
-        val responseText = callAi(prompt, synthesizePrompt, provider)
+        val responseText = callGemini(prompt, synthesizePrompt)
         var result = try {
             parseResponse(responseText)
         } catch (e: Exception) {
-            log.warn("Synthesize parse failed, falling back to direct AI lookup for '{}': {}", name, e.message)
-            lookupLiquor(name, provider)
+            log.error("Synthesize parse failed for '{}': {}", name, e.message)
+            throw RuntimeException("Failed to synthesize data for '$name': ${e.message}")
         }
 
-        // Enforce factual data from the most reliable source
         result = enforceCollectedFacts(result, collectedData)
 
-        // Use synthesisReasoningAlias if synthesisReasoning is null (handles both JSON key variants)
         val reasoning = result.synthesisReasoning ?: result.synthesisReasoningAlias
 
-        // Build source transparency info
         val sourceInfos = collectedData.map { data ->
             val fields = mutableListOf<String>()
             if (data.name != null) fields.add("name")
@@ -174,7 +317,6 @@ class AiServiceImpl(
             data.price?.let { highlights["price"] = it }
             data.volume?.let { highlights["volume"] = it }
 
-            // Collect original text content for preview transparency
             val originalTexts = mutableMapOf<String, String>()
             data.description?.let { originalTexts["description"] = it }
             data.extra["nose"]?.toString()?.let { originalTexts["nose"] = it }
@@ -231,7 +373,6 @@ class AiServiceImpl(
     }
 
     private fun enforceCollectedFacts(result: AiLookupResponse, data: List<ExternalLookupData>): AiLookupResponse {
-        // Find the best ABV, volume, origin from collected data
         val bestAbv = data.mapNotNull { it.abv }.firstOrNull()
         val bestVolume = data.mapNotNull { it.volume }.firstOrNull()
         val bestOrigin = data.mapNotNull { it.origin }.firstOrNull()
@@ -247,7 +388,7 @@ class AiServiceImpl(
         )
     }
 
-    // ========== Step 3b: Suggest Alternatives ==========
+    // ========== Suggest Alternatives ==========
 
     private val suggestPrompt = """
         You are a bilingual (English/Korean) liquor expert. The user searched for an alcoholic beverage but we could not find reliable data from external databases.
@@ -271,11 +412,10 @@ class AiServiceImpl(
         Return ONLY valid JSON, no markdown, no explanation.
     """.trimIndent()
 
-    override fun suggestAlternatives(userInput: String, provider: String): SuggestionResponse {
-        val responseText = callAi(
+    override fun suggestAlternatives(userInput: String): SuggestionResponse {
+        val responseText = callGemini(
             "The user searched for '$userInput' but we couldn't find it in any external database. Suggest alternatives.",
-            suggestPrompt,
-            provider
+            suggestPrompt
         )
         val cleaned = cleanJson(responseText)
         return try {
@@ -290,126 +430,82 @@ class AiServiceImpl(
         }
     }
 
-    // ========== Legacy: Pure AI Lookup ==========
-
-    private val systemPrompt = """
-        You are a bilingual (English/Korean) liquor expert with comprehensive knowledge about alcoholic beverages worldwide.
-        When given a liquor name, provide the most accurate information possible.
-        Use real, verified data — do NOT fabricate or guess.
-
-        IMPORTANT: You MUST return ALL fields listed below, including ALL Korean translation fields (_ko). Every field is required.
-
-        Return a JSON object with exactly these fields:
-
-        English fields:
-        - name (string): the full official name
-        - type (string): e.g. "Single Malt Scotch Whisky"
-        - category (string): one of "whisky", "wine", "gin", "vodka", "rum", "tequila", "brandy", "beer", "liqueur", "sake", "soju", "other"
-        - abv (number): alcohol by volume percentage
-        - age (string or null): e.g. "12 Years", "NAS"
-        - score (integer): quality score out of 100
-        - price (string): approximate retail price e.g. "${'$'}65"
-        - origin (string): country of origin
-        - region (string): specific region
-        - volume (string): standard bottle size e.g. "750ml"
-        - about (string): 2-3 sentences
-        - heritage (string): 2-3 sentences about origin and history
-        - profile (object): category-specific scores from 0-100
-        - tastingNotes (array of strings): 4-6 keywords
-        - tastingDetail (string): 3-5 sentences. Nose, Palate, Finish.
-        - pairing (array of strings): 4-6 food pairings
-        - bottleVisualDescription (string): Detailed visual description of the bottle
-        - suggestedImageKeyword (string): a keyword for image search
-
-        Korean translation fields (REQUIRED):
-        - name_ko, type_ko, about_ko, heritage_ko, tastingNotes_ko, tastingDetail_ko, pairing_ko
-
-        Return ONLY valid JSON, no markdown, no explanation, no code blocks.
-    """.trimIndent()
-
-    override fun lookupLiquor(name: String, provider: String): AiLookupResponse {
-        val responseText = callAi("Tell me about: $name", systemPrompt, provider)
-        return parseResponse(responseText)
-    }
-
     // ========== Core AI Communication ==========
 
-    private fun callAi(userMessage: String, sysPrompt: String, provider: String): String {
-        return when (provider.lowercase()) {
-            "openai" -> callOpenAi(userMessage, sysPrompt)
-            else -> callClaude(userMessage, sysPrompt)
-        }
-    }
-
-    private fun callClaude(userMessage: String, sysPrompt: String): String {
-        if (claudeApiKey.isBlank()) {
-            throw IllegalStateException("Claude API key is not configured. Set ANTHROPIC_API_KEY environment variable.")
+    private fun callGemini(userMessage: String, sysPrompt: String): String {
+        if (googleApiKey.isBlank()) {
+            throw IllegalStateException("Google API key is not configured. Set GOOGLE_API_KEY environment variable.")
         }
 
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
-            set("x-api-key", claudeApiKey)
-            set("anthropic-version", "2023-06-01")
         }
 
         val body = mapOf(
-            "model" to "claude-haiku-4-5-20251001",
-            "max_tokens" to 4096,
-            "system" to sysPrompt,
-            "messages" to listOf(
-                mapOf("role" to "user", "content" to userMessage)
+            "contents" to listOf(
+                mapOf("role" to "user", "parts" to listOf(mapOf("text" to userMessage)))
+            ),
+            "systemInstruction" to mapOf(
+                "parts" to listOf(mapOf("text" to sysPrompt))
+            ),
+            "generationConfig" to mapOf(
+                "temperature" to 0.2,
+                "maxOutputTokens" to 16384,
+                "responseMimeType" to "application/json"
             )
         )
 
         val request = HttpEntity(body, headers)
-        val response = restTemplate.postForEntity(
-            "https://api.anthropic.com/v1/messages",
-            request,
-            Map::class.java
-        )
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$googleApiKey"
 
-        val content = response.body?.get("content") as? List<*>
-            ?: throw RuntimeException("Empty response from Claude API")
-        val textBlock = content.firstOrNull() as? Map<*, *>
-            ?: throw RuntimeException("No content block in Claude response")
-        return textBlock["text"] as? String
-            ?: throw RuntimeException("No text in Claude response content block")
+        val response = restTemplate.postForEntity(url, request, Map::class.java)
+        return extractGeminiText(response.body)
     }
 
-    private fun callOpenAi(userMessage: String, sysPrompt: String): String {
-        if (openaiApiKey.isBlank()) {
-            throw IllegalStateException("OpenAI API key is not configured. Set OPENAI_API_KEY environment variable.")
+    private fun callGeminiWithSearch(userMessage: String, sysPrompt: String): String {
+        if (googleApiKey.isBlank()) {
+            throw IllegalStateException("Google API key is not configured. Set GOOGLE_API_KEY environment variable.")
         }
 
         val headers = HttpHeaders().apply {
             contentType = MediaType.APPLICATION_JSON
-            setBearerAuth(openaiApiKey)
         }
 
         val body = mapOf(
-            "model" to "gpt-4o",
-            "messages" to listOf(
-                mapOf("role" to "system", "content" to sysPrompt),
-                mapOf("role" to "user", "content" to userMessage)
+            "contents" to listOf(
+                mapOf("role" to "user", "parts" to listOf(mapOf("text" to userMessage)))
             ),
-            "max_tokens" to 4096
+            "systemInstruction" to mapOf(
+                "parts" to listOf(mapOf("text" to sysPrompt))
+            ),
+            "tools" to listOf(mapOf("googleSearch" to emptyMap<String, Any>())),
+            "generationConfig" to mapOf(
+                "temperature" to 0.2,
+                "maxOutputTokens" to 16384
+            )
         )
 
         val request = HttpEntity(body, headers)
-        val response = restTemplate.postForEntity(
-            "https://api.openai.com/v1/chat/completions",
-            request,
-            Map::class.java
-        )
+        val url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$googleApiKey"
 
-        val choices = response.body?.get("choices") as? List<*>
-            ?: throw RuntimeException("Empty response from OpenAI API")
-        val choice = choices.firstOrNull() as? Map<*, *>
-            ?: throw RuntimeException("No choices in OpenAI response")
-        val message = choice["message"] as? Map<*, *>
-            ?: throw RuntimeException("No message in OpenAI choice")
-        return message["content"] as? String
-            ?: throw RuntimeException("No content in OpenAI message")
+        val response = restTemplate.postForEntity(url, request, Map::class.java)
+        return extractGeminiText(response.body)
+    }
+
+    private fun extractGeminiText(body: Map<*, *>?): String {
+        val candidates = body?.get("candidates") as? List<*>
+            ?: throw RuntimeException("Empty response from Gemini API")
+        val firstCandidate = candidates.firstOrNull() as? Map<*, *>
+            ?: throw RuntimeException("No candidates in Gemini response")
+        val content = firstCandidate["content"] as? Map<*, *>
+            ?: throw RuntimeException("No content in Gemini candidate")
+        val parts = content["parts"] as? List<*>
+            ?: throw RuntimeException("No parts in Gemini content")
+
+        return parts.mapNotNull { part ->
+            (part as? Map<*, *>)?.get("text") as? String
+        }.joinToString("")
+            .ifBlank { throw RuntimeException("No text content in Gemini response") }
     }
 
     private fun parseResponse(text: String): AiLookupResponse {
@@ -428,13 +524,70 @@ class AiServiceImpl(
             .replace(Regex("```\\s*"), "")
             .trim()
 
-        // If AI returned text before JSON, try to extract the JSON object
-        val jsonStart = cleaned.indexOf('{')
-        val jsonEnd = cleaned.lastIndexOf('}')
-        if (jsonStart > 0 && jsonEnd > jsonStart) {
-            cleaned = cleaned.substring(jsonStart, jsonEnd + 1)
+        // Fix raw newlines/tabs inside JSON string values only
+        cleaned = fixRawNewlinesInJson(cleaned)
+
+        val objStart = cleaned.indexOf('{')
+        val objEnd = cleaned.lastIndexOf('}')
+        val arrStart = cleaned.indexOf('[')
+        val arrEnd = cleaned.lastIndexOf(']')
+
+        val useObj = objStart >= 0 && objEnd > objStart
+        val useArr = arrStart >= 0 && arrEnd > arrStart
+
+        val startPos: Int
+        val endPos: Int
+        if (useObj && useArr) {
+            if (objStart <= arrStart) {
+                startPos = objStart; endPos = objEnd
+            } else {
+                startPos = arrStart; endPos = arrEnd
+            }
+        } else if (useObj) {
+            startPos = objStart; endPos = objEnd
+        } else if (useArr) {
+            startPos = arrStart; endPos = arrEnd
+        } else {
+            return cleaned
+        }
+
+        if (startPos > 0) {
+            cleaned = cleaned.substring(startPos, endPos + 1)
         }
 
         return cleaned
     }
+
+    /**
+     * Fix raw newlines inside JSON string values.
+     * Walks character by character, tracking whether we're inside a quoted string.
+     */
+    private fun fixRawNewlinesInJson(json: String): String {
+        val sb = StringBuilder(json.length)
+        var inString = false
+        var i = 0
+        while (i < json.length) {
+            val c = json[i]
+            if (c == '\\' && inString && i + 1 < json.length) {
+                // Already-escaped character — pass through both chars
+                sb.append(c)
+                sb.append(json[i + 1])
+                i += 2
+                continue
+            }
+            if (c == '"') {
+                inString = !inString
+                sb.append(c)
+            } else if (inString && c == '\n') {
+                sb.append("\\n")
+            } else if (inString && c == '\t') {
+                sb.append("\\t")
+            } else {
+                sb.append(c)
+            }
+            i++
+        }
+        return sb.toString()
+    }
+
 }

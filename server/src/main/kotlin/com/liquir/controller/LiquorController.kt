@@ -5,6 +5,7 @@ import com.liquir.service.AiService
 import com.liquir.service.ExternalDatabaseService
 import com.liquir.service.ImageGenerationService
 import com.liquir.service.LiquorService
+import com.liquir.service.SearchResultCache
 import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.http.HttpStatus
@@ -21,7 +22,8 @@ class LiquorController(
     private val liquorService: LiquorService,
     private val aiService: AiService,
     private val imageGenerationService: ImageGenerationService,
-    private val externalDatabaseService: ExternalDatabaseService
+    private val externalDatabaseService: ExternalDatabaseService,
+    private val searchResultCache: SearchResultCache
 ) {
 
     private val log = LoggerFactory.getLogger(LiquorController::class.java)
@@ -91,64 +93,65 @@ class LiquorController(
     }
 
     /**
-     * New pipeline:
-     * 1. AI normalizes user input → canonical name + search queries + category
-     * 2. External DB + crawling → collect all data from multiple sources
-     * 3a. Enough data → AI synthesizes into final response
-     * 3b. Not enough → return suggestions
+     * Pipeline:
+     * 1. Gemini + Google Search grounding (identify + collect data)
+     * 2. External DB search with identified name/category (enrich)
+     * 3. Merge all → synthesize + image generation (parallel)
      */
     @PostMapping("/ai-lookup")
     fun aiLookup(@RequestBody request: AiLookupRequest): ResponseEntity<Any> {
         return try {
-            // Step 1: AI normalizes the query
-            log.info("Step 1: Normalizing query '{}'", request.name)
-            val normalized = aiService.normalizeQuery(request.name, request.provider)
-            log.info("Normalized: '{}' → '{}' (category: {}, confidence: {})",
-                request.name, normalized.canonicalName, normalized.category, normalized.confidence)
+            // Step 1: Google Search (identify + base data)
+            log.info("Step 1: Google Search for '{}'", request.name)
+            val googleResult = aiService.searchWithGoogle(request.name)
+            log.info("Identified: '{}' ({}), {} results, confidence: {}",
+                googleResult.canonicalName, googleResult.category,
+                googleResult.data.size, googleResult.confidence)
 
-            // Step 2: Collect data from all sources (APIs + crawling)
-            log.info("Step 2: Collecting data from external sources for '{}'", normalized.canonicalName)
-            val collected = externalDatabaseService.collectAll(normalized.searchQueries, normalized.category)
-            log.info("Collected {} data items from sources: {}", collected.data.size, collected.sources)
+            // Step 2: External DB search with identified info
+            log.info("Step 2: External DB search for '{}'", googleResult.canonicalName)
+            val collected = externalDatabaseService.collectAll(
+                googleResult.searchQueries, googleResult.category
+            )
 
-            // Step 3: Decide based on collected data
-            if (collected.found && collected.data.isNotEmpty()) {
-                log.info("Step 3: Synthesizing + image generation in parallel ({} data items)", collected.data.size)
-                val externalImageUrls = collected.data.mapNotNull { it.imageUrl }
+            // Merge all data
+            val allData = googleResult.data + collected.data
+            val allSources = (googleResult.sources + collected.sources).distinct()
+            val allImageUrls = (googleResult.imageUrls + collected.data.mapNotNull { it.imageUrl }).distinct()
 
-                // Run in parallel
-                val synthesizeFuture = CompletableFuture.supplyAsync({
-                    aiService.synthesizeData(normalized.canonicalName, collected.data, request.provider)
-                }, sseExecutor)
+            log.info("Merged {} data items from sources: {}", allData.size, allSources)
 
-                val imageFuture = CompletableFuture.supplyAsync({
-                    try {
-                        imageGenerationService.generateImage(
-                            normalized.canonicalName, null, externalImageUrls
-                        )
-                    } catch (e: Exception) {
-                        log.warn("Image generation failed: {}", e.message)
-                        null
-                    }
-                }, sseExecutor)
-
-                var result = synthesizeFuture.join()
-                result = result.copy(dataSource = "database", dataSources = collected.sources)
-
-                val generatedImage = imageFuture.join()
-                if (generatedImage != null) {
-                    result = result.copy(imageUrl = generatedImage)
-                } else if (externalImageUrls.isNotEmpty()) {
-                    result = result.copy(imageUrl = externalImageUrls.first())
-                }
-
-                ResponseEntity.ok(result)
-            } else {
-                // Not enough data → return suggestions
-                log.info("Step 3b: Insufficient data, generating suggestions for '{}'", request.name)
-                val suggestions = aiService.suggestAlternatives(request.name, request.provider)
-                ResponseEntity.ok(suggestions)
+            if (allData.isEmpty()) {
+                val suggestions = aiService.suggestAlternatives(request.name)
+                return ResponseEntity.ok(suggestions)
             }
+
+            // Step 3: Parallel — synthesize + image generation
+            log.info("Step 3: Synthesize + image generation ({} data items)", allData.size)
+            val synthesizeFuture = CompletableFuture.supplyAsync({
+                aiService.synthesizeData(googleResult.canonicalName, allData)
+            }, sseExecutor)
+
+            val imageFuture = CompletableFuture.supplyAsync({
+                try {
+                    imageGenerationService.generateImage(googleResult.canonicalName, null, allImageUrls)
+                } catch (e: Exception) {
+                    log.warn("Image generation failed: {}", e.message)
+                    null
+                }
+            }, sseExecutor)
+
+            var result = synthesizeFuture.join()
+            result = result.copy(dataSource = "database", dataSources = allSources)
+
+            val generatedImage = imageFuture.join()
+            if (generatedImage != null) {
+                result = result.copy(imageUrl = generatedImage)
+            } else if (allImageUrls.isNotEmpty()) {
+                result = result.copy(imageUrl = allImageUrls.first())
+            }
+
+            ResponseEntity.ok(result)
         } catch (e: IllegalStateException) {
             ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
                 .body(mapOf("error" to (e.message ?: "AI service unavailable")))
@@ -159,15 +162,23 @@ class LiquorController(
         }
     }
 
+    @GetMapping("/search-result/{resultId}")
+    fun getSearchResult(@PathVariable resultId: String): ResponseEntity<AiLookupResponse> {
+        val result = searchResultCache.get(resultId)
+            ?: return ResponseEntity.notFound().build()
+        return ResponseEntity.ok(result)
+    }
+
     /**
-     * SSE streaming version of ai-lookup that sends progress events.
+     * SSE streaming version.
      */
     @PostMapping("/ai-lookup-stream", produces = [MediaType.TEXT_EVENT_STREAM_VALUE])
     fun aiLookupStream(@RequestBody request: AiLookupRequest): SseEmitter {
-        val emitter = SseEmitter(120_000L) // 2 min timeout
+        val emitter = SseEmitter(120_000L)
 
         sseExecutor.execute {
             try {
+                val emitterLock = Any()
                 fun sendProgress(step: String, message: String, messageKo: String) {
                     try {
                         val data = mapper.writeValueAsString(mapOf(
@@ -175,28 +186,30 @@ class LiquorController(
                             "message" to message,
                             "messageKo" to messageKo
                         ))
-                        emitter.send(SseEmitter.event().name("progress").data(data))
+                        synchronized(emitterLock) {
+                            emitter.send(SseEmitter.event().name("progress").data(data))
+                        }
                     } catch (e: Exception) {
                         log.debug("Failed to send SSE progress: {}", e.message)
                     }
                 }
 
-                // Step 1: Normalize
+                // Step 1: Google Search (identify + collect)
                 sendProgress(
-                    "normalizing",
-                    "Analyzing liquor name with AI...",
-                    "AI가 주류 이름을 분석하고 있습니다..."
+                    "searching_google",
+                    "Searching with Google + AI identification...",
+                    "Google 검색 + AI 식별 중..."
                 )
 
-                val normalized = aiService.normalizeQuery(request.name, request.provider)
+                val googleResult = aiService.searchWithGoogle(request.name)
 
                 sendProgress(
-                    "normalized",
-                    "${request.name} → ${normalized.canonicalName} (${normalized.category})",
-                    "${request.name} → ${normalized.canonicalName} (${normalized.category})"
+                    "identified",
+                    "${request.name} → ${googleResult.canonicalName} (${googleResult.category}), ${googleResult.data.size} sources found",
+                    "${request.name} → ${googleResult.canonicalName} (${googleResult.category}), ${googleResult.data.size}개 소스 발견"
                 )
 
-                // Step 2: Collect from sources
+                // Step 2: External DB search
                 sendProgress(
                     "collecting",
                     "Searching external databases...",
@@ -204,67 +217,80 @@ class LiquorController(
                 )
 
                 val collected = externalDatabaseService.collectAll(
-                    normalized.searchQueries,
-                    normalized.category
+                    googleResult.searchQueries,
+                    googleResult.category
                 ) { sourceName, sourceNameKo ->
                     sendProgress("collecting", "Searching $sourceName...", "${sourceNameKo} 검색 중...")
                 }
 
-                if (collected.found && collected.data.isNotEmpty()) {
-                    val externalImageUrls = collected.data.mapNotNull { it.imageUrl }
+                // Merge all data
+                val allData = googleResult.data + collected.data
+                val allSources = (googleResult.sources + collected.sources).distinct()
+                val allImageUrls = (googleResult.imageUrls + collected.data.mapNotNull { it.imageUrl }).distinct()
 
-                    // Run AI synthesis and image generation IN PARALLEL
+                sendProgress(
+                    "collected",
+                    "Found ${allData.size} data sources total",
+                    "총 ${allData.size}개의 데이터 소스를 찾았습니다"
+                )
+
+                if (allData.isEmpty()) {
                     sendProgress(
-                        "synthesizing",
-                        "AI synthesis + image generation running in parallel...",
-                        "AI 데이터 종합 + 이미지 생성을 동시에 진행하고 있습니다..."
+                        "not_found",
+                        "No data found, generating suggestions...",
+                        "데이터를 찾을 수 없어 추천 항목을 생성합니다..."
                     )
-
-                    val synthesizeFuture = CompletableFuture.supplyAsync({
-                        aiService.synthesizeData(normalized.canonicalName, collected.data, request.provider)
-                    }, sseExecutor)
-
-                    val imageFuture = CompletableFuture.supplyAsync({
-                        try {
-                            imageGenerationService.generateImage(
-                                normalized.canonicalName, null, externalImageUrls
-                            )
-                        } catch (e: Exception) {
-                            log.warn("Image generation failed: {}", e.message)
-                            null
-                        }
-                    }, sseExecutor)
-
-                    // Wait for AI synthesis first (usually faster than image gen)
-                    var result = synthesizeFuture.join()
-                    result = result.copy(dataSource = "database", dataSources = collected.sources)
-
-                    sendProgress(
-                        "generating_image",
-                        "Waiting for image generation...",
-                        "이미지 생성을 기다리고 있습니다..."
-                    )
-
-                    // Now wait for image
-                    val generatedImage = imageFuture.join()
-                    if (generatedImage != null) {
-                        result = result.copy(imageUrl = generatedImage)
-                    } else if (externalImageUrls.isNotEmpty()) {
-                        result = result.copy(imageUrl = externalImageUrls.first())
-                    }
-
-                    val resultJson = mapper.writeValueAsString(result)
-                    emitter.send(SseEmitter.event().name("done").data(resultJson))
-                } else {
-                    sendProgress(
-                        "suggesting",
-                        "Generating alternative suggestions...",
-                        "대체 추천 검색어를 생성하고 있습니다..."
-                    )
-
-                    val suggestions = aiService.suggestAlternatives(request.name, request.provider)
+                    val suggestions = aiService.suggestAlternatives(request.name)
                     val suggestionsJson = mapper.writeValueAsString(suggestions)
-                    emitter.send(SseEmitter.event().name("not_found").data(suggestionsJson))
+                    synchronized(emitterLock) {
+                        emitter.send(SseEmitter.event().name("not_found").data(suggestionsJson))
+                    }
+                    emitter.complete()
+                    return@execute
+                }
+
+                // Step 3: Parallel — synthesize + image
+                sendProgress(
+                    "synthesizing",
+                    "AI synthesis + image generation in parallel...",
+                    "AI 데이터 종합 + 이미지 생성을 동시에 진행 중..."
+                )
+
+                val synthesizeFuture = CompletableFuture.supplyAsync({
+                    aiService.synthesizeData(googleResult.canonicalName, allData)
+                }, sseExecutor)
+
+                val imageFuture = CompletableFuture.supplyAsync({
+                    try {
+                        imageGenerationService.generateImage(
+                            googleResult.canonicalName, null, allImageUrls
+                        )
+                    } catch (e: Exception) {
+                        log.warn("Image generation failed: {}", e.message)
+                        null
+                    }
+                }, sseExecutor)
+
+                var result = synthesizeFuture.join()
+                result = result.copy(dataSource = "database", dataSources = allSources)
+
+                sendProgress(
+                    "generating_image",
+                    "Waiting for image generation...",
+                    "이미지 생성을 기다리고 있습니다..."
+                )
+
+                val generatedImage = imageFuture.join()
+                if (generatedImage != null) {
+                    result = result.copy(imageUrl = generatedImage)
+                } else if (allImageUrls.isNotEmpty()) {
+                    result = result.copy(imageUrl = allImageUrls.first())
+                }
+
+                val resultId = searchResultCache.store(result)
+                val doneJson = mapper.writeValueAsString(mapOf("resultId" to resultId))
+                synchronized(emitterLock) {
+                    emitter.send(SseEmitter.event().name("done").data(doneJson))
                 }
 
                 emitter.complete()

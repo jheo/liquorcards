@@ -21,8 +21,8 @@ export const deleteLiquor = (id: number) =>
 export const updateStatus = (id: number, status: string) =>
   api.patch(`/liquors/${id}/status`, { status });
 
-export const aiSearch = (name: string, provider?: string) =>
-  api.post<AiSearchResult>('/liquors/ai-lookup', { name, provider });
+export const aiSearch = (name: string) =>
+  api.post<AiSearchResult>('/liquors/ai-lookup', { name });
 
 export interface SseProgressEvent {
   step: string;
@@ -37,13 +37,13 @@ export interface SseCallbacks {
   onError: (error: string) => void;
 }
 
-export function aiSearchStream(name: string, provider: string, callbacks: SseCallbacks): () => void {
+export function aiSearchStream(name: string, callbacks: SseCallbacks): () => void {
   const controller = new AbortController();
 
   fetch('/api/liquors/ai-lookup-stream', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ name, provider }),
+    body: JSON.stringify({ name }),
     signal: controller.signal,
   })
     .then(async (response) => {
@@ -60,6 +60,8 @@ export function aiSearchStream(name: string, provider: string, callbacks: SseCal
 
       const decoder = new TextDecoder();
       let buffer = '';
+      let currentEvent = '';
+      let dataBuffer = '';
 
       while (true) {
         const { done, value } = await reader.read();
@@ -68,23 +70,30 @@ export function aiSearchStream(name: string, provider: string, callbacks: SseCal
         buffer += decoder.decode(value, { stream: true });
         const lines = buffer.split('\n');
         buffer = lines.pop() || '';
-
-        let currentEvent = '';
         for (const line of lines) {
           if (line.startsWith('event:')) {
             currentEvent = line.slice(6).trim();
+            dataBuffer = '';
           } else if (line.startsWith('data:')) {
-            const data = line.slice(5).trim();
-            if (!data) continue;
+            dataBuffer += line.slice(5).trim();
+            if (!dataBuffer) continue;
             try {
-              const parsed = JSON.parse(data);
+              const parsed = JSON.parse(dataBuffer);
               switch (currentEvent) {
                 case 'progress':
                   callbacks.onProgress(parsed);
                   break;
-                case 'done':
-                  callbacks.onDone(parsed);
+                case 'done': {
+                  const { resultId } = parsed;
+                  const res = await fetch(`/api/liquors/search-result/${resultId}`);
+                  if (!res.ok) {
+                    callbacks.onError(`Failed to fetch result: HTTP ${res.status}`);
+                    break;
+                  }
+                  const fullResult = await res.json();
+                  callbacks.onDone(fullResult);
                   break;
+                }
                 case 'not_found':
                   callbacks.onNotFound(parsed);
                   break;
@@ -92,12 +101,14 @@ export function aiSearchStream(name: string, provider: string, callbacks: SseCal
                   callbacks.onError(parsed.error || 'Unknown error');
                   break;
               }
+              currentEvent = '';
+              dataBuffer = '';
             } catch {
-              // ignore parse errors for partial data
+              // JSON incomplete — keep accumulating in dataBuffer
             }
-            currentEvent = '';
           } else if (line.trim() === '') {
             currentEvent = '';
+            dataBuffer = '';
           }
         }
       }

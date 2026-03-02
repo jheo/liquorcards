@@ -53,8 +53,27 @@ class WebCrawlerServiceImpl : WebCrawlerService {
 
         val searchDoc = fetchDocument(searchUrl) ?: return null
 
-        val productLink = searchDoc.select("a[href*=/whisky-database/details/]").firstOrNull()
-            ?: searchDoc.select("a[href*=/whisky-database/]").firstOrNull()
+        val allLinks = searchDoc.select("a[href*=/whisky-database/details/]")
+        if (allLinks.isEmpty()) return null
+
+        // Pick the link whose URL or text best matches the query words
+        val queryWords = query.lowercase().split(" ", "-").filter { it.length > 2 }
+        val productLink = allLinks
+            .distinctBy { it.attr("href") }
+            .maxByOrNull { link ->
+                val href = link.attr("href").lowercase()
+                val text = link.text().lowercase()
+                val combined = "$href $text"
+                queryWords.count { combined.contains(it) }
+            }
+            ?.takeIf { link ->
+                val href = link.attr("href").lowercase()
+                val text = link.text().lowercase()
+                val combined = "$href $text"
+                // At least the primary brand word must be present
+                val primaryWord = queryWords.firstOrNull() ?: return@takeIf false
+                combined.contains(primaryWord)
+            }
             ?: return null
 
         val productUrl = if (productLink.attr("href").startsWith("http")) {
@@ -135,7 +154,7 @@ class WebCrawlerServiceImpl : WebCrawlerService {
                 .userAgent(userAgent)
                 .header("Accept", "application/json")
                 .ignoreContentType(true)
-                .timeout(10000)
+                .timeout(15000)
 
             val response = connection.execute()
             val json = mapper.readTree(response.body())
@@ -380,7 +399,7 @@ class WebCrawlerServiceImpl : WebCrawlerService {
                 .userAgent(userAgent)
                 .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                 .header("Accept-Language", "en-US,en;q=0.9,ja;q=0.8,ko;q=0.7")
-                .timeout(10000)
+                .timeout(15000)
                 .followRedirects(true)
                 .get()
         } catch (e: Exception) {

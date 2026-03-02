@@ -16,7 +16,6 @@ export interface ProgressStep {
 export interface SearchItem {
   id: string;
   query: string;
-  provider: string;
   status: SearchStatus;
   result?: AiSearchResult;
   suggestions?: SuggestionResponse;
@@ -26,7 +25,7 @@ export interface SearchItem {
 
 interface SearchQueueContextValue {
   items: SearchItem[];
-  addSearch: (query: string, provider?: string) => void;
+  addSearch: (query: string) => void;
   removeItem: (id: string) => void;
   clearAll: () => void;
   retryItem: (id: string) => void;
@@ -39,11 +38,11 @@ export function SearchQueueProvider({ children }: { children: ReactNode }) {
   const processingRef = useRef(false);
   const abortRef = useRef<(() => void) | null>(null);
 
-  const addSearch = useCallback((query: string, provider: string = 'claude') => {
+  const addSearch = useCallback((query: string) => {
     const id = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
     setItems((prev) => [
       ...prev,
-      { id, query, provider, status: 'pending', progressSteps: [] },
+      { id, query, status: 'pending', progressSteps: [] },
     ]);
   }, []);
 
@@ -80,7 +79,7 @@ export function SearchQueueProvider({ children }: { children: ReactNode }) {
         )
       );
 
-      const abort = aiSearchStream(pendingItem.query, pendingItem.provider, {
+      const abort = aiSearchStream(pendingItem.query, {
         onProgress: (event: SseProgressEvent) => {
           setItems((prev) =>
             prev.map((item) =>

@@ -1,6 +1,5 @@
 package com.liquir.service
 
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import org.slf4j.LoggerFactory
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.stereotype.Service
@@ -49,38 +48,68 @@ class ExternalDatabaseServiceImpl(
 
     private val log = LoggerFactory.getLogger(ExternalDatabaseServiceImpl::class.java)
     private val restTemplate = RestTemplate()
-    private val mapper = jacksonObjectMapper()
     private val executor = Executors.newFixedThreadPool(6)
+
+    private val stopWords = setOf("year", "years", "old", "single", "malt", "double", "triple",
+        "blend", "blended", "cask", "reserve", "special", "edition", "limited",
+        "vintage", "aged", "barrel", "strength", "proof", "bottle", "bottled",
+        "the", "and", "for", "with", "ale", "beer", "lager", "stout", "ipa",
+        "whisky", "whiskey", "vodka", "rum", "gin", "tequila", "wine", "brandy", "cognac",
+        "scotch", "bourbon", "rye")
 
     /**
      * Check if an external result is relevant to the search query.
-     * Extracts the brand name (first significant word) from the canonical query
-     * and ensures it appears in the result name/brand.
+     * Supports abbreviation matching (e.g., "OBC" → "Original Beer Company").
+     * Checks all search queries, not just the canonical one.
      */
     private fun isRelevantResult(result: ExternalLookupData, searchQueries: List<String>): Boolean {
         val resultName = ((result.name ?: "") + " " + (result.brand ?: "")).lowercase().trim()
-        if (resultName.isBlank()) return true // No name to check, allow through
+        if (resultName.isBlank()) return true
 
-        // Extract brand keywords from the first (canonical) search query
-        // e.g., "Talisker 10 Year Old" → brand is "talisker"
-        val canonical = searchQueries.firstOrNull()?.lowercase() ?: return true
-        val brandWords = canonical.split(" ", "-")
-            .filter { it.length > 2 }
-            .filter { it !in setOf("year", "years", "old", "single", "malt", "double", "triple",
-                "blend", "blended", "cask", "reserve", "special", "edition", "limited",
-                "vintage", "aged", "barrel", "strength", "proof", "bottle", "bottled",
-                "the", "and", "for", "with") }
+        // Check against ALL search queries (not just canonical)
+        for (query in searchQueries) {
+            val queryLower = query.lowercase()
+            val brandWords = queryLower.split(" ", "-")
+                .filter { it.length > 1 }
+                .filter { it !in stopWords }
 
-        if (brandWords.isEmpty()) return true
+            if (brandWords.isEmpty()) return true
 
-        // The primary brand word (first significant word) MUST be present in the result
-        val primaryBrand = brandWords.first()
-        val found = resultName.contains(primaryBrand)
-        if (!found) {
-            log.info("Rejecting irrelevant result '{}' - brand '{}' not found (query: '{}')",
-                resultName.trim(), primaryBrand, canonical)
+            // Check if ANY significant brand word appears in the result
+            val anyWordMatch = brandWords.any { resultName.contains(it) }
+            if (anyWordMatch) return true
+
+            // Check abbreviation: "obc" could match "Original Beer Company"
+            val primaryBrand = brandWords.first()
+            if (isAbbreviationOf(primaryBrand, resultName)) return true
         }
-        return found
+
+        val canonical = searchQueries.firstOrNull() ?: ""
+        log.info("Rejecting irrelevant result '{}' (queries: {})", resultName.trim(), searchQueries)
+        return false
+    }
+
+    /**
+     * Check if `abbr` is an abbreviation of consecutive words in `text`.
+     * e.g., "obc" matches "original beer company" (O-B-C).
+     */
+    private fun isAbbreviationOf(abbr: String, text: String): Boolean {
+        if (abbr.length < 2) return false
+        val words = text.split(" ", "-", ".", ",").filter { it.isNotBlank() }
+        if (words.size < abbr.length) return false
+
+        // Try every starting position in the word list
+        for (start in 0..words.size - abbr.length) {
+            var match = true
+            for (i in abbr.indices) {
+                if (words[start + i].firstOrNull()?.lowercaseChar() != abbr[i]) {
+                    match = false
+                    break
+                }
+            }
+            if (match) return true
+        }
+        return false
     }
 
     override fun collectAll(searchQueries: List<String>, category: String): ExternalLookupResult {
@@ -194,7 +223,7 @@ class ExternalDatabaseServiceImpl(
         // Collect results with timeout, filtering irrelevant matches
         for ((task, future) in futures) {
             try {
-                val result = future.get(15, TimeUnit.SECONDS)
+                val result = future.get(25, TimeUnit.SECONDS)
                 if (result != null) {
                     if (isRelevantResult(result, searchQueries)) {
                         allData.add(result)

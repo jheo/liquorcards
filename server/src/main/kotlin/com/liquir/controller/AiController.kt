@@ -25,21 +25,27 @@ class AiController(
     @PostMapping("/search")
     fun search(@RequestBody request: AiLookupRequest): ResponseEntity<Any> {
         return try {
-            val normalized = aiService.normalizeQuery(request.name, request.provider)
-            val collected = externalDatabaseService.collectAll(normalized.searchQueries, normalized.category)
+            // Step 1: Google Search (identify + base data)
+            val googleResult = aiService.searchWithGoogle(request.name)
 
-            if (collected.found && collected.data.isNotEmpty()) {
-                val externalImageUrls = collected.data.mapNotNull { it.imageUrl }
+            // Step 2: External DB search
+            val collected = externalDatabaseService.collectAll(
+                googleResult.searchQueries, googleResult.category
+            )
 
-                // Run AI synthesis + image generation in parallel
+            val allData = googleResult.data + collected.data
+            val allSources = (googleResult.sources + collected.sources).distinct()
+            val allImageUrls = (googleResult.imageUrls + collected.data.mapNotNull { it.imageUrl }).distinct()
+
+            if (allData.isNotEmpty()) {
                 val synthesizeFuture = CompletableFuture.supplyAsync({
-                    aiService.synthesizeData(normalized.canonicalName, collected.data, request.provider)
+                    aiService.synthesizeData(googleResult.canonicalName, allData)
                 }, executor)
 
                 val imageFuture = CompletableFuture.supplyAsync({
                     try {
                         imageGenerationService.generateImage(
-                            normalized.canonicalName, null, externalImageUrls
+                            googleResult.canonicalName, null, allImageUrls
                         )
                     } catch (e: Exception) {
                         log.warn("Image generation failed: {}", e.message)
@@ -48,18 +54,18 @@ class AiController(
                 }, executor)
 
                 var result = synthesizeFuture.join()
-                result = result.copy(dataSource = "database", dataSources = collected.sources)
+                result = result.copy(dataSource = "database", dataSources = allSources)
 
                 val generatedImage = imageFuture.join()
                 if (generatedImage != null) {
                     result = result.copy(imageUrl = generatedImage)
-                } else if (externalImageUrls.isNotEmpty()) {
-                    result = result.copy(imageUrl = externalImageUrls.first())
+                } else if (allImageUrls.isNotEmpty()) {
+                    result = result.copy(imageUrl = allImageUrls.first())
                 }
 
                 ResponseEntity.ok(result)
             } else {
-                val suggestions = aiService.suggestAlternatives(request.name, request.provider)
+                val suggestions = aiService.suggestAlternatives(request.name)
                 ResponseEntity.ok(suggestions)
             }
         } catch (e: IllegalStateException) {

@@ -1,23 +1,35 @@
 package com.liquir.service
 
 import com.liquir.dto.AiLookupResponse
-import com.liquir.dto.NormalizedQuery
 import com.liquir.dto.SuggestionResponse
 
+/**
+ * Step 1 결과: Google Search grounding으로 정규화 + 기본 정보 획득
+ */
+data class GoogleSearchResult(
+    val canonicalName: String,
+    val canonicalNameKo: String?,
+    val category: String,
+    val searchQueries: List<String>,
+    val confidence: Double,
+    val data: List<ExternalLookupData>,
+    val imageUrls: List<String>,
+    val sources: List<String>
+)
+
 interface AiService {
-    /** Legacy: pure AI generation (fallback only) */
-    fun lookupLiquor(name: String, provider: String = "claude"): AiLookupResponse
+    /**
+     * Step 1: Gemini + Google Search grounding
+     * 정규화(canonical name, category, search queries) + 기본 정보 최대한 획득
+     */
+    fun searchWithGoogle(userInput: String): GoogleSearchResult
 
-    /** Step 1: Normalize user input into canonical name + search queries */
-    fun normalizeQuery(userInput: String, provider: String = "claude"): NormalizedQuery
-
-    /** Step 3: Synthesize all collected data into a final response */
+    /** Step 3: 모든 데이터 병합 → 최종 종합 */
     fun synthesizeData(
         name: String,
-        collectedData: List<ExternalLookupData>,
-        provider: String = "claude"
+        collectedData: List<ExternalLookupData>
     ): AiLookupResponse
 
-    /** Step 3 (alt): Not enough data, suggest alternatives */
-    fun suggestAlternatives(userInput: String, provider: String = "claude"): SuggestionResponse
+    /** Step 3 (alt): 데이터 부족 시 대안 추천 */
+    fun suggestAlternatives(userInput: String): SuggestionResponse
 }
