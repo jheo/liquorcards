@@ -13,11 +13,16 @@ import {
   Trash2,
   ChevronDown,
   ChevronUp,
+  Database,
+  Bot,
+  Search,
+  FileText,
+  Info,
 } from 'lucide-react';
 import { Button } from '../components/ui/Button';
 import { Chip } from '../components/ui/Chip';
-import { useSearchQueue } from '../hooks/useSearchQueue';
-import type { SearchItem } from '../hooks/useSearchQueue';
+import { useSearchQueue } from '../hooks/SearchQueueContext';
+import type { SearchItem } from '../hooks/SearchQueueContext';
 import { createLiquor, uploadImage } from '../api/client';
 import { useLanguage } from '../i18n/LanguageContext';
 import type { LiquorProfile } from '../types/liquor';
@@ -44,7 +49,7 @@ export function AddLiquorPage() {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') handleSearch();
+    if (e.key === 'Enter' && !e.nativeEvent.isComposing) handleSearch();
   };
 
   const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,11 +98,16 @@ export function AddLiquorPage() {
         heritage: result.heritage,
         profile: result.profile,
         tastingNotes: result.tastingNotes,
+        tastingDetail: result.tastingDetail,
+        tastingDetailKo: result.tastingDetailKo,
+        pairing: result.pairing,
+        pairingKo: result.pairingKo,
         nameKo: result.nameKo,
         typeKo: result.typeKo,
         aboutKo: result.aboutKo,
         heritageKo: result.heritageKo,
         tastingNotesKo: result.tastingNotesKo,
+        dataSource: result.dataSource,
         status: 'active',
       };
 
@@ -111,6 +121,10 @@ export function AddLiquorPage() {
     }
   };
 
+  const handleSuggestionClick = (suggestionName: string) => {
+    addSearch(suggestionName, provider);
+  };
+
   const statusIcon = (status: SearchItem['status']) => {
     switch (status) {
       case 'pending':
@@ -119,6 +133,8 @@ export function AddLiquorPage() {
         return <Loader size={16} className="spin queue-icon queue-icon-searching" />;
       case 'done':
         return <CheckCircle size={16} className="queue-icon queue-icon-done" />;
+      case 'not_found':
+        return <AlertCircle size={16} className="queue-icon queue-icon-not-found" />;
       case 'error':
         return <AlertCircle size={16} className="queue-icon queue-icon-error" />;
     }
@@ -196,6 +212,7 @@ export function AddLiquorPage() {
               onRetry={() => retryItem(item.id)}
               onSave={() => handleSave(item)}
               onUploadClick={() => handleUploadClick(item.id)}
+              onSuggestionClick={handleSuggestionClick}
             />
           ))}
         </div>
@@ -217,6 +234,7 @@ interface QueueItemProps {
   onRetry: () => void;
   onSave: () => void;
   onUploadClick: () => void;
+  onSuggestionClick: (name: string) => void;
 }
 
 function QueueItem({
@@ -232,6 +250,7 @@ function QueueItem({
   onRetry,
   onSave,
   onUploadClick,
+  onSuggestionClick,
 }: QueueItemProps) {
   const result = item.result;
 
@@ -265,11 +284,23 @@ function QueueItem({
       : result.tastingNotes
     : undefined;
 
+  const displayTastingDetail = result
+    ? locale === 'ko' && result.tastingDetailKo
+      ? result.tastingDetailKo
+      : result.tastingDetail
+    : undefined;
+
+  const displayPairing = result
+    ? locale === 'ko' && result.pairingKo
+      ? result.pairingKo
+      : result.pairing
+    : undefined;
+
   const profile: LiquorProfile | undefined = result?.profile;
 
   return (
     <div className={`queue-item queue-item-${item.status}`}>
-      <div className="queue-item-header" onClick={item.status === 'done' ? onToggle : undefined}>
+      <div className="queue-item-header" onClick={item.status === 'done' || item.status === 'not_found' ? onToggle : undefined}>
         <div className="queue-item-left">
           {statusIcon}
           <div className="queue-item-info">
@@ -278,13 +309,26 @@ function QueueItem({
               <span className="queue-item-status">{t('addLiquor.pending')}</span>
             )}
             {item.status === 'searching' && (
-              <span className="queue-item-status">{t('addLiquor.searching')}</span>
+              <span className="queue-item-status">
+                {item.progressSteps.length > 0
+                  ? (locale === 'ko'
+                    ? item.progressSteps[item.progressSteps.length - 1].messageKo
+                    : item.progressSteps[item.progressSteps.length - 1].message)
+                  : t('addLiquor.searching')}
+              </span>
             )}
             {item.status === 'error' && (
               <span className="queue-item-status queue-item-status-error">{item.error}</span>
             )}
             {item.status === 'done' && displayType && (
               <span className="queue-item-status">{displayType}</span>
+            )}
+            {item.status === 'not_found' && (
+              <span className="queue-item-status queue-item-status-not-found">
+                {locale === 'ko'
+                  ? (item.suggestions?.messageKo || '검색 결과를 찾을 수 없습니다')
+                  : (item.suggestions?.message || 'No results found')}
+              </span>
             )}
           </div>
         </div>
@@ -294,7 +338,7 @@ function QueueItem({
               <RotateCcw size={14} />
             </button>
           )}
-          {item.status === 'done' && (
+          {(item.status === 'done' || item.status === 'not_found') && (
             expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />
           )}
           {item.status !== 'searching' && (
@@ -305,8 +349,130 @@ function QueueItem({
         </div>
       </div>
 
+      {/* Progress steps for searching items */}
+      {item.status === 'searching' && item.progressSteps.length > 0 && (
+        <div className="queue-item-progress">
+          {item.progressSteps.map((step, i) => (
+            <div
+              key={i}
+              className={`progress-step ${i === item.progressSteps.length - 1 ? 'progress-step-active' : 'progress-step-done'}`}
+            >
+              {i === item.progressSteps.length - 1 ? (
+                <Loader size={12} className="spin" />
+              ) : (
+                <CheckCircle size={12} />
+              )}
+              <span>{locale === 'ko' ? step.messageKo : step.message}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Suggestions UI for not_found */}
+      {expanded && item.status === 'not_found' && item.suggestions && (
+        <div className="queue-item-detail">
+          <div className="suggestions-section">
+            <div className="suggestions-header">
+              <Search size={16} />
+              <span>{locale === 'ko' ? '이런 주류를 찾으셨나요?' : 'Did you mean one of these?'}</span>
+            </div>
+            <div className="suggestions-list">
+              {item.suggestions.suggestions.map((suggestion) => (
+                <button
+                  key={suggestion.name}
+                  className="suggestion-card"
+                  onClick={() => onSuggestionClick(suggestion.name)}
+                >
+                  <div className="suggestion-name">
+                    {locale === 'ko' && suggestion.nameKo ? suggestion.nameKo : suggestion.name}
+                  </div>
+                  <div className="suggestion-reason">
+                    {locale === 'ko' && suggestion.reasonKo ? suggestion.reasonKo : suggestion.reason}
+                  </div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {expanded && result && (
         <div className="queue-item-detail">
+          <div className="data-source-badge-container">
+            {result.dataSource === 'database' ? (
+              <span className="data-source-badge data-source-db">
+                <Database size={12} />
+                {locale === 'ko' ? '외부 DB 기반' : 'Database-verified'}
+                {result.dataSources && result.dataSources.length > 0 && (
+                  <span className="data-source-detail">({result.dataSources.join(', ')})</span>
+                )}
+              </span>
+            ) : (
+              <span className="data-source-badge data-source-ai">
+                <Bot size={12} />
+                {locale === 'ko' ? 'AI 생성 데이터' : 'AI-generated'}
+              </span>
+            )}
+          </div>
+
+          {/* Source Transparency */}
+          {result.collectedSources && result.collectedSources.length > 0 && (
+            <div className="sources-section">
+              <div className="sources-header">
+                <FileText size={14} />
+                <span>{locale === 'ko' ? '수집된 원문 소스' : 'Collected Sources'}</span>
+                <span className="sources-count">{result.collectedSources.length}</span>
+              </div>
+              <div className="sources-list">
+                {result.collectedSources.map((src, i) => (
+                  <div key={i} className="source-card">
+                    <div className="source-card-header">
+                      <span className="source-name">{src.source}</span>
+                      <span className="source-fields">{src.fieldsFound.length} fields</span>
+                    </div>
+                    {src.name && <div className="source-match-name">{src.name}</div>}
+                    <div className="source-highlights">
+                      {Object.entries(src.highlights).filter(([, v]) => v).map(([key, value]) => (
+                        <div key={key} className="source-highlight">
+                          <span className="source-highlight-key">{key}</span>
+                          <span className="source-highlight-value">{value}</span>
+                        </div>
+                      ))}
+                    </div>
+                    {src.originalTexts && Object.keys(src.originalTexts).length > 0 && (
+                      <div className="source-original-texts">
+                        {Object.entries(src.originalTexts).map(([key, text]) => (
+                          <div key={key} className="source-original-text">
+                            <span className="source-original-label">
+                              {key === 'description' ? (locale === 'ko' ? '원문 설명' : 'Description')
+                                : key === 'nose' ? 'Nose'
+                                : key === 'palate' ? 'Palate'
+                                : key === 'finish' ? 'Finish'
+                                : key === 'flavor_notes' ? (locale === 'ko' ? '풍미 노트' : 'Flavor Notes')
+                                : key === 'review' ? (locale === 'ko' ? '리뷰' : 'Review')
+                                : key === 'tasting_note' ? (locale === 'ko' ? '테이스팅 노트' : 'Tasting Note')
+                                : key}
+                            </span>
+                            <span className="source-original-value">{text}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {result.synthesisReasoning && (
+                <div className="synthesis-reasoning">
+                  <div className="synthesis-reasoning-header">
+                    <Info size={14} />
+                    <span>{locale === 'ko' ? 'AI 종합 근거' : 'AI Synthesis Reasoning'}</span>
+                  </div>
+                  <div className="synthesis-reasoning-text">{result.synthesisReasoning}</div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="preview-grid">
             <PreviewField label={t('addLiquor.type')} value={displayType} />
             <PreviewField label={t('addLiquor.category')} value={result.category} />
@@ -350,12 +516,28 @@ function QueueItem({
             </div>
           )}
 
-          {displayTastingNotes && displayTastingNotes.length > 0 && (
+          {(displayTastingDetail || (displayTastingNotes && displayTastingNotes.length > 0)) && (
             <div className="preview-section">
               <div className="preview-section-title">{t('addLiquor.tastingNotes')}</div>
+              {displayTastingDetail && (
+                <div className="preview-section-text">{displayTastingDetail}</div>
+              )}
+              {displayTastingNotes && displayTastingNotes.length > 0 && (
+                <div className="tasting-notes">
+                  {displayTastingNotes.map((note) => (
+                    <span key={note} className="tasting-note">{note}</span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {displayPairing && displayPairing.length > 0 && (
+            <div className="preview-section">
+              <div className="preview-section-title">{t('addLiquor.pairing')}</div>
               <div className="tasting-notes">
-                {displayTastingNotes.map((note) => (
-                  <span key={note} className="tasting-note">{note}</span>
+                {displayPairing.map((item) => (
+                  <span key={item} className="tasting-note">{item}</span>
                 ))}
               </div>
             </div>
